@@ -1,12 +1,12 @@
 <?php
 /**
- * Plugin Name: Polylang Auto Translate
+ * Plugin Name: Polylang Google API Translate
  * Plugin URI:
  * Description: Translate polylang using Google Cloud Translate API. Compatible with Polylang, Polylang pro and Polylang Woocommerce
  * Version: 1.0
  * Author: Andrzej Bednorz
  * Author URI:
- * License: GPL2
+ * License: GPL3
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
