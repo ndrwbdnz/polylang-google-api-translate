@@ -1,0 +1,5 @@
+{
+    "require": {
+        "wp-user-manager/wp-optionskit": "^1.0"
+    }
+}

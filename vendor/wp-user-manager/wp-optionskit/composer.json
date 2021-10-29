@@ -1,0 +1,28 @@
+{
+	"name": "wp-user-manager/wp-optionskit",
+	"license": "GPL-3.0-or-later",
+	"description": "A toolkit for developers to create administration options panels for WordPress powered by Vuejs",
+	"homepage": "https://github.com/alessandrotesoro/wp-optionskit/",
+	"authors": [{
+		"name": "WP User Manager",
+		"homepage": "https://wpusermanager.com/"
+	}],
+	"keywords": [
+		"wordpress",
+		"optionskit"
+	],
+	"support": {
+		"issues": "https://github.com/alessandrotesoro/wp-optionskit/issues/"
+	},
+	"require": {
+		"php": ">=5.3.2",
+		"composer/installers": "~1.0"
+	},
+	"autoload": {
+		"classmap": ["wp-optionskit.php"]
+	},
+	"require-dev": {
+		"phpcompatibility/php-compatibility": "^9.3",
+		"dealerdirect/phpcodesniffer-composer-installer": "^0.5.0"
+	}
+}
