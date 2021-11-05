@@ -50,14 +50,7 @@ class PAT_translate_class{
         //this has to be fired every time options are udpated - the page is not reloaded
         add_action( 'update_option_pat_settings', array($this, 'pat_get_options'), 10);
         
-        //hook up plugins functions to various wordpress places and actions
-        // add_filter('manage_post_posts_columns', array( $this, 'pat_translation_columns'));
-        // add_filter('manage_page_posts_columns', array( $this, 'pat_translation_columns'));
-        // add_filter('manage_product_posts_columns', array( $this, 'pat_translation_columns'));
-        // add_action('manage_posts_custom_column', array( $this,'pat_populate_translation_columns'), 10, 2);
-        // add_action('manage_pages_custom_column', array( $this, 'pat_populate_translation_columns'), 10, 2);
-        // add_action('manage_products_custom_column', array( $this, 'pat_populate_translation_columns'), 10, 2);
-
+        //hook up plugins functions to the 
         add_action('admin_enqueue_scripts', array( $this, 'pat_admin_enqueue_scripts'), 10);
         //cannot add another link using this hook - doing it using java script
         //add_filter( 'pll_get_new_post_translation_link', array( $this, 'pat_translation_link'), 10, 3);
@@ -189,12 +182,14 @@ class PAT_translate_class{
 
     function pat_admin_enqueue_scripts(){
         //if this is post, page or product edit table page
-        if (isset( $GLOBALS['pagenow'], $_GET['post_type'] ) && 'edit.php' === $GLOBALS['pagenow'] && in_array($_GET['post_type'], array('post', 'page', 'product'))){
-            wp_enqueue_script( 'my_custom_script', plugin_dir_url( __FILE__ ) . 'js/admin.js', array('jquery'), null, true );
+        if ( function_exists('get_current_screen')) {
+            if ( in_array(get_current_screen()->post_type, array('post', 'page', 'product'))){
+                wp_enqueue_script( 'polylang-google-api-translate', plugin_dir_url( __FILE__ ) . 'js/polylang-google-api-translate.js', array('jquery'), null, true );
+            }
         }
     }
 
-    //depreceated}
+    //depreceated
     function pat_translation_link($link, $language, $post_id){
         $post_type = get_post_type( $post_id );
 
