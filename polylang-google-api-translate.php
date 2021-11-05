@@ -142,8 +142,9 @@ class PAT_translate_class{
     function pat_get_options(){
 
         $option_table = get_option('pat_settings');
+        $option_table = is_array($option_table)? $option_table : array();
 
-        $this->pat_strings_to_exclude = explode(PHP_EOL, array_key_exists('pat_strings_to_exclude', $option_table)? $option_table['pat_strings_to_exclude'] : array());
+        $this->pat_strings_to_exclude = array_key_exists('pat_strings_to_exclude', $option_table)? explode(PHP_EOL, $option_table['pat_strings_to_exclude']) : "";
         $this->pat_meta_to_exclude = array_key_exists('pat_meta_to_exclude', $option_table)? $option_table['pat_meta_to_exclude'] : array();
         $this->pat_meta_to_translate = array_key_exists('pat_meta_to_translate', $option_table)? $option_table['pat_meta_to_translate'] : array();
         $this->pat_taxonomies_to_exclude = array_key_exists('pat_taxonomies_to_exclude', $option_table)? $option_table['pat_taxonomies_to_exclude'] : array();
