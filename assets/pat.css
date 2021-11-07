@@ -1,0 +1,8 @@
+.pat_auto_translate_icon{
+    width: 25px;
+    height: 25px;
+    display: block;
+    background-image: url("pat_icon.png");
+    background-size: contain;
+    margin: 5px 0;
+}

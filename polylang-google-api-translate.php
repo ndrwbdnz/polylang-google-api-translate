@@ -52,6 +52,7 @@ class PAT_translate_class{
         
         //hook up plugins functions to the 
         add_action('admin_enqueue_scripts', array( $this, 'pat_admin_enqueue_scripts'), 10);
+        add_action('admin_print_styles', array( $this, 'pat_admin_enqueue_styles') );
         //cannot add another link using this hook - doing it using java script
         //add_filter( 'pll_get_new_post_translation_link', array( $this, 'pat_translation_link'), 10, 3);
         //polylang hooks up here at 5000 to be the last. We want to be before polylang to translate the data
@@ -184,7 +185,15 @@ class PAT_translate_class{
         //if this is post, page or product edit table page
         if ( function_exists('get_current_screen')) {
             if ( in_array(get_current_screen()->post_type, array('post', 'page', 'product'))){
-                wp_enqueue_script( 'polylang-google-api-translate', plugin_dir_url( __FILE__ ) . 'js/polylang-google-api-translate.js', array('jquery'), null, true );
+                wp_enqueue_script( 'pat-js', plugin_dir_url( __FILE__ ) . 'assets/pat.js', array('jquery'), null, true );
+            }
+        }
+    }
+
+    function pat_admin_enqueue_styles(){
+        if ( function_exists('get_current_screen')) {
+            if ( in_array(get_current_screen()->post_type, array('post', 'page', 'product'))){
+                wp_enqueue_style( 'pat-css',  plugin_dir_url( __FILE__ ) . 'assets/pat.css');
             }
         }
     }
@@ -334,7 +343,7 @@ class PAT_translate_class{
 
     }
 
- // Main translation functions - post and product ---------------------------------------------------------------------------------------------------------------
+ // Main translation functions - post (and page) and product ---------------------------------------------------------------------------------------------------------------
 
     private function pat_new_post_translation($is_block_editor){
         global $post;
