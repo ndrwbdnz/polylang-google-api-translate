@@ -41,7 +41,7 @@ class PAT_translate_class{
         //load library to manage settings
         require __DIR__ . '/vendor/autoload.php';
         $this->settings_panel  = new \TDP\OptionsKit( 'pat' );
-        $this->settings_panel->set_page_title( __( 'Polylang Auto-Translate Settings' ) );
+        $this->settings_panel->set_page_title( __( 'Polylang Google API Translate Settings' ) );
 
         add_filter( 'pat_menu', array( $this, 'pat_setup_menu' ));
         add_filter( 'pat_settings_tabs', array( $this, 'pat_register_settings_tabs' ));
@@ -50,15 +50,12 @@ class PAT_translate_class{
         //this has to be fired every time options are udpated - the page is not reloaded
         add_action( 'update_option_pat_settings', array($this, 'pat_get_options'), 10);
         
-        //hook up plugins functions to the 
+        //enqueue scripts
         add_action('admin_enqueue_scripts', array( $this, 'pat_admin_enqueue_scripts'), 10);
         add_action('admin_print_styles', array( $this, 'pat_admin_enqueue_styles') );
-        //cannot add another link using this hook - doing it using java script
-        //add_filter( 'pll_get_new_post_translation_link', array( $this, 'pat_translation_link'), 10, 3);
-        //polylang hooks up here at 5000 to be the last. We want to be before polylang to translate the data
-        add_filter( 'use_block_editor_for_post', array( $this, 'pat_new_post_translation' ), 4999 );
 
-        //add_action('admin_post_pat_auto_translate', array( $this, 'pat_auto_translate_handler' ));
+        //add user interface functions (links are created in js script)
+        add_action('admin_post_pat_auto_translate', array( $this, 'pat_auto_translate_handler' ));
         add_action('admin_notices', array( $this, 'pat_auto_translate_notice'));
         
     }
@@ -150,8 +147,9 @@ class PAT_translate_class{
     private function pat_get_metas(){
 
         global $wpdb;
-        $query = $wpdb->prepare( "SELECT DISTINCT pm.meta_key as value, pm.meta_key as label  FROM up6_2_postmeta pm
-                                LEFT JOIN up6_2_posts p ON p.ID = pm.post_id 
+        $p = $wpdb->get_blog_prefix();
+        $query = $wpdb->prepare( "SELECT DISTINCT pm.meta_key as value, pm.meta_key as label  FROM {$p}postmeta pm
+                                LEFT JOIN {$p}posts p ON p.ID = pm.post_id 
                                 WHERE p.post_type in ('post', 'page', 'product')
                                 ORDER BY pm.meta_key");
         $result = $wpdb->get_results($query);
@@ -169,9 +167,10 @@ class PAT_translate_class{
 
     private function pat_get_taxonomies(){
         global $wpdb;
-        $query = $wpdb->prepare( "SELECT DISTINCT tt.taxonomy as value, tt.taxonomy as label FROM up6_2_term_taxonomy tt
-                                    LEFT JOIN up6_2_term_relationships tr ON tr.term_taxonomy_id = tt.term_taxonomy_id 
-                                    LEFT JOIN up6_2_posts p ON p.ID = tr.object_id 
+        $p = $wpdb->get_blog_prefix();
+        $query = $wpdb->prepare( "SELECT DISTINCT tt.taxonomy as value, tt.taxonomy as label FROM {$p}term_taxonomy tt
+                                    LEFT JOIN {$p}term_relationships tr ON tr.term_taxonomy_id = tt.term_taxonomy_id 
+                                    LEFT JOIN {$p}posts p ON p.ID = tr.object_id 
                                     WHERE p.post_type in ('post', 'page', 'product')
                                     ORDER BY tt.taxonomy");
         $result = $wpdb->get_results($query);
@@ -179,7 +178,7 @@ class PAT_translate_class{
         return $result;
     }
     
- // Admin links  ---------------------------------------------------------------------------------------------------------------
+ // Scripts  ---------------------------------------------------------------------------------------------------------------
 
     function pat_admin_enqueue_scripts(){
         //if this is post, page or product edit table page
@@ -198,110 +197,25 @@ class PAT_translate_class{
         }
     }
 
-    //depreceated
-    function pat_translation_link($link, $language, $post_id){
-        $post_type = get_post_type( $post_id );
-
-        if (in_array($post_type, array('page', 'post', 'product'))){
-            $args = array(
-				'post_type' => $post_type,
-				'from_post' => $post_id,
-				'new_lang'  => $language->slug,
-                'auto_translate'  => 1,
-			);
-
-			$pat_link = add_query_arg( $args, admin_url( 'post-new.php' ) );
-
-			if ( 'display' === $context ) {
-				$pat_link = wp_nonce_url( $link, 'new-post-translation' );
-			} else {
-				$pat_link = add_query_arg( '_wpnonce', wp_create_nonce( 'new-post-translation' ), $pat_link );
-			}
-        }
-
-        return $link;
-    }
-
-    //depreceated
-    function pat_translation_columns( $column_array ) {
-
-        //if (!$this->pat_pll_functions_exist()) return;
-
-        $pll_language_array = pll_the_languages(array('raw'=>1));
-            // [id] => language id
-            // [slug] => language code used in urls
-            // [name] => language name
-            // [url] => url of the translation
-            // [flag] => url of the flag
-            // [current_lang] => true if this is the current language, false otherwise
-            // [no_translation] => true if there is no available translation, false otherwise
-        
-        foreach ($pll_language_array as $language){
-            $column_array[ 'pat_' . $language['slug']] = $language['name'];
-        }
-    
-        return $column_array;
-    }
-    
-    //depreceated
-    function pat_populate_translation_columns( $column_name, $id ) {
-
-        //if (!$this->pat_pll_functions_exist()) return;
-        
-        $current_lang_slug = pll_get_post_language($id);
-               
-        $pll_language_array = pll_the_languages(array('raw'=>1));
-        foreach ($pll_language_array as $language){
-            if( $column_name == 'pat_' . $language['slug']){              
-                $translated_id = pll_get_post($id, $language['slug']);
-                if (!is_null($translated_id) && is_numeric($translated_id)){
-                    $edit_link = get_edit_post_link($translated_id);
-                    echo "<a href='".$edit_link."' target=_blank>edit</a>";
-                } else {
-
-                    echo '<a class="pat_add_post" href="'.get_admin_url().'admin-post.php?action=pat_auto_translate'.
-                                                    '&post_id='.$id.
-                                                    '&lang_from='.$current_lang_slug.
-                                                    '&lang_to='.$language['slug'].
-                                                    '">add draft</a>';
-
-                    echo '</br></br><a class="pat_add_post" href="'.get_admin_url().'admin-post.php?action=pat_auto_translate'.
-                                                    '&post_id='.$id.
-                                                    '&lang_from='.$current_lang_slug.
-                                                    '&lang_to='.$language['slug'].
-                                                    '&edit_redirect=1'.
-                                                    '">add & edit</a>';
-                    
-                    echo '</br></br><a class="pat_add_post" href="'.get_admin_url().'admin-post.php?action=pat_auto_translate'.
-                                                    '&post_id='.$id.
-                                                    '&lang_from='.$current_lang_slug.
-                                                    '&lang_to='.$language['slug'].
-                                                    '&auto_publish=1'.
-                                                    '">add & publish</a>';
-
-                }
-            }
-        }
-    }
-
  // Admin actions ---------------------------------------------------------------------------------------------------------------
     
-    //depreceated
     function pat_auto_translate_handler() {
-
-        if( !isset($_REQUEST['post_id']) || !isset($_REQUEST['lang_from']) || !isset($_REQUEST['lang_to'])){
+        
+        if (!check_admin_referer( 'new-post-translation' )){
+            $error_msg = 'The link has expired. Please try again.';
+            $translated_post_id = FALSE;
+        } else if( !isset($_REQUEST['from_post']) || !isset($_REQUEST['new_lang'])){
             $error_msg = 'Cannot translate: post or language not provided';
             $translated_post_id = FALSE;
         } else {
-            $post_id = $_REQUEST['post_id'];
-            $source_lang = $_REQUEST['lapostng_from'];
-            $target_lang = $_REQUEST['lang_to'];
+            $post_id = $_REQUEST['from_post'];
+            $source_lang = pll_get_post_language($post_id);
+            $target_lang = $_REQUEST['new_lang'];
             $post_type = get_post_type($post_id);
-            $edit_redirect = isset($_REQUEST['edit_redirect']) ? $_REQUEST['edit_redirect'] : 0;
-            $publish = isset($_REQUEST['auto_publish']) ? $_REQUEST['auto_publish'] : 0;
+            $edit_post = isset($_REQUEST['edit_post']) ? $_REQUEST['edit_post'] : 0;
             $error_msg = '';
 
-            $translated_post_id = $this->pat_translate_function($post_id, $source_lang, $target_lang, $post_type, $publish, $error_msg);
+            $translated_post_id = $this->pat_translate_function($post_id, $source_lang, $target_lang, $post_type, $error_msg);
         }
 
         if (!is_numeric($translated_post_id) && $error_msg != ''){
@@ -311,15 +225,16 @@ class PAT_translate_class{
                 'pat_translation_msg' => urlencode($error_msg),
                 'post_status' => 'all'
             ), 'edit.php' );
-        } else if($edit_redirect == 1){
+        } else if($edit_post == 1){
             $location = add_query_arg( array(
                 'post' => $translated_post_id,
-                'action' => 'edit'
+                'action' => 'edit',
+                'pat_translation_msg' => urlencode("Translataion succesfull. Please review and publish the post.")
             ), 'post.php' );
         } else {
             $location = add_query_arg( array(
                 'post_type' => $post_type,
-                'pat_translation_msg' => "Translataion succesfull. Please review and publish the post.",
+                'pat_translation_msg' => urlencode("Translataion succesfull. Please review and publish the post."),
                 'post_status' => 'all'
             ), 'edit.php' );    
         }
@@ -345,42 +260,13 @@ class PAT_translate_class{
 
  // Main translation functions - post (and page) and product ---------------------------------------------------------------------------------------------------------------
 
-    private function pat_new_post_translation($is_block_editor){
-        global $post;
-		static $done = array();
-
-		if ( ! empty( $post ) && isset( $GLOBALS['pagenow'], $_GET['from_post'], $_GET['new_lang'] ) && 'post-new.php' === $GLOBALS['pagenow'] && $this->model->is_translated_post_type( $post->post_type ) ) {
-			check_admin_referer( 'new-post-translation' );
-
-			// Capability check already done in post-new.php
-			$from_post_id = (int) $_GET['from_post'];
-			$lang         = $this->model->get_language( sanitize_key( $_GET['new_lang'] ) );
-
-			if ( ! $from_post_id || ! $lang || ! empty( $done[ $from_post_id ] ) ) {
-				return $is_block_editor;
-			}
-
-			$done[ $from_post_id ] = true; // Avoid a second duplication in the block editor. Using an array only to allow multiple phpunit tests.
-
-			//$this->taxonomies->copy( $from_post_id, $post->ID, $lang->slug );
-			//$this->post_metas->copy( $from_post_id, $post->ID, $lang->slug );
-
-			if ( is_sticky( $from_post_id ) ) {
-				stick_post( $post->ID );
-			}
-		}
-
-		return $is_block_editor;
-    }
-
-    //deprecated
-    private function pat_translate_function($post_id, $source_lang, $target_lang, $post_type = 'post', $publish = 0, &$error_msg = ''){      
+    private function pat_translate_function($post_id, $source_lang, $target_lang, $post_type = 'post', &$error_msg = ''){      
 
         try{
             if (in_array($post_type, array('post', 'page'))){
-                $translated_post_id = $this->pat_translate_post($post_id, $source_lang, $target_lang, $publish);
+                $translated_post_id = $this->pat_translate_post($post_id, $source_lang, $target_lang);
             } elseif ($post_type == 'product') {
-                $translated_post_id = $this->pat_translate_product($post_id, $source_lang, $target_lang, $publish);
+                $translated_post_id = $this->pat_translate_product($post_id, $source_lang, $target_lang);
             }
 
         } catch (Exception $e) {
@@ -397,8 +283,8 @@ class PAT_translate_class{
 
     }
     
-    //deprecated
-    private function pat_translate_post($post_id, $source_lang, $target_lang, $publish = 0){
+    
+    private function pat_translate_post($post_id, $source_lang, $target_lang){
 
         $post_to_translate = get_post($post_id);
         
@@ -418,7 +304,7 @@ class PAT_translate_class{
             'post_content' => $translated_content,
             'post_title' => html_entity_decode($translated_title, ENT_QUOTES),
             'post_excerpt' => html_entity_decode($translated_excerpt, ENT_QUOTES),
-            'post_status' => ($publish == 1)? 'publish' : 'draft',
+            'post_status' => 'draft',
             'post_type' => $post_to_translate->post_type,
             'comment_status' => $post_to_translate->comment_status,
             'ping_status' => $post_to_translate->ping_status,
@@ -435,12 +321,11 @@ class PAT_translate_class{
 
         return $translated_post_id;
     }
-
-    //depreceated
+    
     //copy of the woocommerce function product_duplicate - with modifications
     //cannot use woocommerce duplicate_product function because polylang hooks into it and copies all product translations
     //this duplication is different - it is supposed to only copy the specific product (not all its translation products) and create a trasnlation product from it
-    private function pat_translate_product($post_id, $source_lang, $target_lang, $publish = 0){
+    private function pat_translate_product($post_id, $source_lang, $target_lang){
         
         $product = wc_get_product( $post_id );
 
@@ -467,6 +352,8 @@ class PAT_translate_class{
         $duplicate->set_purchase_note($this->pat_translate_text($this->pat_api_key, $source_lang, $target_lang, $product->get_purchase_note()));
 		$duplicate->set_status( 'draft' );
 		$duplicate->set_slug( '' );
+
+        add_filter( 'wc_product_has_unique_sku', array($this, 'pat_disable_unique_sku'), PHP_INT_MAX );     //temporarily disable unique sku
         $duplicate->set_sku($product->get_sku( 'edit' ));
 
         //$duplicate->set_parent_id($product->get_parent_id());
@@ -578,8 +465,14 @@ class PAT_translate_class{
 			$duplicate = wc_get_product( $duplicate->get_id() );
 		}
 
+        remove_filter( 'wc_product_has_unique_sku', array($this, 'pat_disable_unique_sku'));                //stop setting unique sku to false
+
 		return $duplicate;
         
+    }
+
+    private function pat_disable_unique_sku(){
+        return false;
     }
 
  // Specialized translation sub-functions - metas, taxonomies and terms -------------------------------------------------------------------------------------
@@ -676,7 +569,7 @@ class PAT_translate_class{
     public function pat_translate_text($api_key, $source_lang, $target_lang, $text_to_translate, $excluded_strings = array()){
 
         $placeholders = array();
-        for( $i = 1 ; $i <= count($excluded_strings); $i++ ){
+        for( $i = 1 ; $i < count($excluded_strings); $i++ ){
             $placeholders[] = '1NT' . $i . 'NT1';
         }
         $text_to_translate = str_replace($excluded_strings, $placeholders, $text_to_translate);
@@ -703,7 +596,9 @@ class PAT_translate_class{
         //handle trasnlated result
         $translation_object = json_decode( (string) $result);
 
-        if ($translation_object->error){
+        if(!$result){
+            throw new Exception('Google returned FALSE. Check in Google API Console if your API key is allowed to be used on this site.');
+        } else if ($translation_object->error){
             throw new Exception($translation_object->error->message);
         } else {
             $translated_text = $translation_object->data->translations[0]->translatedText;

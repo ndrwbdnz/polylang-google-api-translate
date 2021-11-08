@@ -2,7 +2,13 @@
     width: 25px;
     height: 25px;
     display: block;
-    background-image: url("pat_icon.png");
+    background-image: url("pat-icon.png");
     background-size: contain;
     margin: 5px 0;
+}
+
+.pat_auto_translate_icon_small{
+    width: 20px;
+    height: 20px;
+    margin: 0px;
 }
