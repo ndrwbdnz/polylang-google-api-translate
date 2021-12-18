@@ -507,7 +507,7 @@ class PAT_translate_class{
         foreach ($post_taxonomies as $taxonomy){
             //check if taxonomy is not to be skipped
             $taxonomy_flag = $this->pat_taxonomy_flag($taxonomy);
-            if ( $taxonomy_flag != "exclude"){
+            if ($taxonomy != 'language' && $taxonomy_flag != "exclude"){            //exclude language under all conditions
                 //get terms for the given taxonomy assigned to this post
                 $terms = wp_get_post_terms($post_id, $taxonomy);
                 $counter = 0;
