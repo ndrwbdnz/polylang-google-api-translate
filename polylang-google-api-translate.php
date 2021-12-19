@@ -84,15 +84,22 @@ class PAT_translate_class{
     function pat_register_settings( $settings ) {
         $settings = array(
             'general' => array(
-
+                array(
+                    'id'   => 'pat_api_key',
+                    'name' => __( 'Google Translate API key' ),
+                    'desc' => __( 'Add your API key to get started' ),
+                    'type' => 'text'
+                ),
                 array(
                     'id'   => 'pat_strings_to_exclude',
-                    'name' => __( 'Exclude strings from automatic translation (each string in a new line)' ),
+                    'name' => __( 'Exclude strings from automatic translation' ),
+                    'desc' => __( 'Each string in a new line' ),
                     'type' => 'textarea'
                 ),
                 array(
                     'id'   => 'pat_meta_to_exclude',
                     'name' => __( 'Meta values to not copy or translate to translated post' ),
+                    'desc' => __( 'These metas will not be present in the translated post. Woocommerce _product_attributes meta is always excluded because it is handled by the plugin separately.' ),
                     'type' => 'multiselect',
                     'multiple' => true,
                     'options' => $this->pat_get_metas(),
@@ -100,6 +107,7 @@ class PAT_translate_class{
                 array(
                     'id'   => 'pat_meta_to_translate',
                     'name' => __( 'Meta values to translate' ),
+                    'desc' => __( 'These metas will be translated. Metas that are neither translated nor excluded will be copied to the translated post, without translating them.' ),
                     'type' => 'multiselect',
                     'multiple' => true,
                     'options' => $this->pat_get_metas(),
@@ -107,6 +115,7 @@ class PAT_translate_class{
                 array(
                     'id'   => 'pat_taxonomies_to_exclude',
                     'name' => __( 'Taxonomies to not copy or translate to translated post' ),
+                    'desc' => __( 'These taxonomies will not be present in the translated post. Polylang taxonomies such as language, term_language, term_translation and post_translations as well as woocommerce taxonomy product_type are already excluded because they are handled by the plugin separately.' ),
                     'type' => 'multiselect',
                     'multiple' => true,
                     'options' => $this->pat_get_taxonomies(),
@@ -114,15 +123,10 @@ class PAT_translate_class{
                 array(
                     'id'   => 'pat_taxonomies_to_translate',
                     'name' => __( 'Taxonomies to translate' ),
+                    'desc' => __( 'These taxonomies will be translated. Taxonomies that are neither translated nor excluded will be copied to the translated post, without translating them.' ),
                     'type' => 'multiselect',
                     'multiple' => true,
                     'options' => $this->pat_get_taxonomies(),
-                ),
-                array(
-                    'id'   => 'pat_api_key',
-                    'name' => __( 'Google Translate API key' ),
-                    'desc' => __( 'Add your API key to get started' ),
-                    'type' => 'text'
                 ),
             ),
         );
@@ -151,18 +155,12 @@ class PAT_translate_class{
         $query = $wpdb->prepare( "SELECT DISTINCT pm.meta_key as value, pm.meta_key as label  FROM {$p}postmeta pm
                                 LEFT JOIN {$p}posts p ON p.ID = pm.post_id 
                                 WHERE p.post_type in ('post', 'page', 'product')
+                                AND pm.meta_key not in ('_product_attributes')
                                 ORDER BY pm.meta_key");
         $result = $wpdb->get_results($query);
 
         return $result;
         
-        // array(array(
-        //     'value' => '1',
-        //     'label' => 'test 1',
-        // ), array(
-        //     'value' => '2',
-        //     'label' => 'test 2',
-        // ));
     }
 
     private function pat_get_taxonomies(){
@@ -172,6 +170,7 @@ class PAT_translate_class{
                                     LEFT JOIN {$p}term_relationships tr ON tr.term_taxonomy_id = tt.term_taxonomy_id 
                                     LEFT JOIN {$p}posts p ON p.ID = tr.object_id 
                                     WHERE p.post_type in ('post', 'page', 'product')
+                                    AND tt.taxonomy not in ('language', 'term_language', 'term_translations', 'post_translations', 'product_type')
                                     ORDER BY tt.taxonomy");
         $result = $wpdb->get_results($query);
 
@@ -356,27 +355,38 @@ class PAT_translate_class{
         add_filter( 'wc_product_has_unique_sku', array($this, 'pat_disable_unique_sku'), PHP_INT_MAX );     //temporarily disable unique sku
         $duplicate->set_sku($product->get_sku( 'edit' ));
 
-        //$duplicate->set_parent_id($product->get_parent_id());
-		//$duplicate->set_total_sales( 0 );
+        //$duplicate->set_parent_id($product->get_parent_id());                 //in case of products there are no parent ids
+		//$duplicate->set_total_sales( 0 );                                     //we want to keep sales count for the product translation - it is the same product
 		//if ( '' !== $product->get_sku( 'edit' ) ) {
-		//	$duplicate->set_sku( wc_product_generate_unique_sku( 0, $product->get_sku( 'edit' ) ) );
+		//	$duplicate->set_sku( wc_product_generate_unique_sku( 0, $product->get_sku( 'edit' ) ) );        //we want to keep the same sku as the original product
 		//}
-		//$duplicate->set_date_created( null );
+		//$duplicate->set_date_created( null );                                                             //we keep date, ratings, reviews etc of the original product
         //$duplicate->set_rating_counts( 0 );
 		//$duplicate->set_average_rating( 0 );
 		//$duplicate->set_review_count( 0 );
-
-        $duplicate->set_meta_data($product->get_meta_data());
+   
+        //meta data is copied when object is cloned, so we have to remove unwanted metas
         foreach ( $meta_to_exclude as $meta_key ) {
-			$duplicate->delete_meta_data( $meta_key );
-		}
+            $duplicate->delete_meta_data( $meta_key );
+        }
+        //once we removed unwanted metas, we now translate the remaining ones
+        //first we get all metas
+        $duplicate_metas = $duplicate->get_meta_data();
+        //we loop through them
+        foreach($duplicate_metas as $meta_object){
+            $meta_data = $meta_object->get_data();              //these metas are in a strange table with each entry being a wc_meta_data object that contains current_data and data tables. We can get the meta data using a function
+            $translated_meta = $this->pat_translate_metas($source_lang, $target_lang, array($meta_data['key'] => $meta_data['value']));     //then we extract from that result key and value to be able to send it to our translation function. We translate only one meta at a time, to avoid looping these values over and over
+            if (!empty($translated_meta) && $translated_meta[$meta_data['key']] != $meta_data['value']){
+                $duplicate->update_meta_data($meta_data['key'], $translated_meta[$meta_data['key']]);           //finally we update the meta data
+            }
+        }
 
-        $translated_metas = $this->pat_translate_metas($source_lang, $target_lang, get_post_meta($post_id));
         $translated_taxonomies = $this->pat_translate_taxonomies($source_lang, $target_lang, get_post_taxonomies($post_id), $post_id);
         $duplicate->set_tag_ids($translated_taxonomies['product_tag']);
         $duplicate->set_category_ids($translated_taxonomies['product_cat']);
 
-        //attributes meta field stores all the attributes for the product (size, weight, color etc) with their relevant paramters (for variations, visible in front end, etc)
+        //attributes meta field (_product_attributes meta key in the wp_postmeta table)
+        //stores all the attributes for the product (size, weight, color etc) with their relevant paramters (for variations, visible in front end, etc)
         //the different values of the attributes (e.g. possible color values) are stored as taxonomies
         //each attribute has the options array inside with the stored ID of taxonomy term, that contains the value (e.g. color name)
         //we have translated all taxonomies already above
@@ -392,7 +402,7 @@ class PAT_translate_class{
             //https://stackoverflow.com/questions/53944532/auto-set-specific-attribute-term-value-to-purchased-products-on-woocommerce
 
             if( ! is_null( $translated_taxonomies[$attribute] )) {
-                $translated_attribute = $attribute;
+                $translated_attribute = $attribute;                                             //attribute is a term object (get_term($translated_term_id, $term->taxonomy))
                 $translated_attribute->set_options( $translated_taxonomies[$attribute] );       //here we assign translation
                 $translated_attributes[$key] = $translated_attribute;
             } else {
@@ -403,13 +413,13 @@ class PAT_translate_class{
 
         $duplicate->set_attributes( $translated_attributes );
 
-        // // Append the new term in the product
+        // Append the new term in the product
         // if( ! has_term( $term_name, $taxonomy, $_product->get_id() ) ){
-        //         wp_set_object_terms($_product->get_id(), $term_slug, $taxonomy, true );
+        //        wp_set_object_terms($_product->get_id(), $term_slug, $taxonomy, true );
         // }
 
-        // check if there are translated products for cross sell and up sell.
-        //If so - link them. If not - set these references empty and provide a notice.
+        //check if there are translated products for cross sell and up sell.
+        //If so - link them. If not - set these references empty
         $cross_sell_ids = $product->get_cross_sell_ids();
         $translated_cross_sell_id = array();
         foreach ($cross_sell_ids as $cross_sell_id){
@@ -429,7 +439,6 @@ class PAT_translate_class{
             }
         }
         $duplicate->set_upsell_ids($translated_up_sell_ids);
-
 
 		// Save parent product.
 		$duplicate->save();
@@ -453,10 +462,18 @@ class PAT_translate_class{
 				// 	$child_duplicate->set_sku( wc_product_generate_unique_sku( 0, $child->get_sku( 'edit' ) ) );
 				// }
                 $child_duplicate->set_sku($child->get_sku( 'edit' ));
-
+                
+                //child metas are cloned during object cloning. We have to remove unwanted metas
 				foreach ( $meta_to_exclude as $meta_key ) {
 					$child_duplicate->delete_meta_data( $meta_key );
 				}
+                //once we removed unwanted metas, we now translate the remaining ones
+                $translated_metas = $this->pat_translate_metas($source_lang, $target_lang, get_post_meta($child_duplicate));
+                //and we have to update original metas with the translated ones
+                foreach($translated_metas as $meta_key => $meta_value){
+                    $child_duplicate->update_meta_data($meta_key, $meta_value);
+                }
+
 				//do_action( 'woocommerce_product_duplicate_before_save', $child_duplicate, $child );
 				$child_duplicate->save();
 			}
@@ -465,13 +482,13 @@ class PAT_translate_class{
 			$duplicate = wc_get_product( $duplicate->get_id() );
 		}
 
-        remove_filter( 'wc_product_has_unique_sku', array($this, 'pat_disable_unique_sku'));                //stop setting unique sku to false
+        remove_filter( 'wc_product_has_unique_sku', array($this, 'pat_disable_unique_sku'));                //stop disabling unique sku 
 
-		return $duplicate;
+		return $duplicate->get_id();
         
     }
 
-    private function pat_disable_unique_sku(){
+    function pat_disable_unique_sku(){
         return false;
     }
 
@@ -482,7 +499,7 @@ class PAT_translate_class{
         $translated_metas = array();
 
         foreach ($post_metas as $key => $meta_value) {
-            //check if metas are to be assigned to the translated post. Flag 0 means skip.
+            //check if metas are to be assigned to the translated post.
             $meta_flag = $this->pat_meta_flag($key);
             if ( $meta_flag != "exclude"){
                 //check if meta values are to be translated, if not - simply copy the values. Flag 1 means translate
@@ -507,9 +524,10 @@ class PAT_translate_class{
         foreach ($post_taxonomies as $taxonomy){
             //check if taxonomy is not to be skipped
             $taxonomy_flag = $this->pat_taxonomy_flag($taxonomy);
-            if ($taxonomy != 'language' && $taxonomy_flag != "exclude"){            //exclude language under all conditions
+            if ($taxonomy_flag != "exclude"){ 
                 //get terms for the given taxonomy assigned to this post
                 $terms = wp_get_post_terms($post_id, $taxonomy);
+
                 $counter = 0;
                 foreach ($terms as $term) {
                     //this function is called recursively to walk up the tree of terms and recreate the term tree in the target language (parent terms)
@@ -613,6 +631,8 @@ class PAT_translate_class{
 
         if (in_array($meta, $this->pat_meta_to_exclude)){
             $meta_flag = "exclude";
+        } else if (in_array($meta, array('_product_attributes'))) {
+            $meta_flag = "exclude";                                                         //always exclude _product_attributes meta
         } else if(in_array($meta, $this->pat_meta_to_translate)){
             $meta_flag = "translate";
         } else {
@@ -625,6 +645,8 @@ class PAT_translate_class{
 
         if (in_array($taxonomy, $this->pat_taxonomies_to_exclude)){
             $taxonomy_flag = "exclude";
+        } else if(in_array($taxonomy, array('language', 'term_language', 'term_translations', 'post_translations', 'product_type'))) {
+            $taxonomy_flag = "exclude";                                                 //always exclude polylang taxonomies
         } else if(in_array($taxonomy, $this->pat_taxonomies_to_translate)){
             $taxonomy_flag = "translate";
         } else {
