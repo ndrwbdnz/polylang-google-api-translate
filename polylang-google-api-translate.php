@@ -9,8 +9,6 @@
  * License: GPL3
  */
 
-//testest
-
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
@@ -277,10 +275,9 @@ class PAT_translate_class{
 
         //join the translated post with the original post
         pll_set_post_language($translated_post_id, $target_lang);
-        pll_save_post_translations(array(
-            $source_lang => $post_id,
-            $target_lang => $translated_post_id
-        ));
+        $post_translations = pll_get_post_translations($post_id);       //get existing post translations
+        $post_translations[$target_lang] = $translated_post_id;         //set post id for the translated language
+        pll_save_post_translations($post_translations);                 //save new post translations
 
     }
     
