@@ -570,10 +570,10 @@ class PAT_translate_class{
             
 
             pll_set_term_language($translated_term['term_id'], $target_lang);
-            pll_save_term_translations(array(
-                $source_lang => $term->term_id,
-                $target_lang => $translated_term['term_id']
-            ));
+
+            $term_translations = pll_get_term_translations($term->term_id);       //get existing post translations
+            $term_translations[$target_lang] = $translated_term['term_id'];         //set post id for the translated language
+            pll_save_term_translations($term_translations);
 
             $translated_term_id = $translated_term['term_id'];
 
