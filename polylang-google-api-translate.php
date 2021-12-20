@@ -467,11 +467,14 @@ class PAT_translate_class{
 				foreach ( $meta_to_exclude as $meta_key ) {
 					$child_duplicate->delete_meta_data( $meta_key );
 				}
-                //once we removed unwanted metas, we now translate the remaining ones
-                $translated_metas = $this->pat_translate_metas($source_lang, $target_lang, get_post_meta($child_duplicate));
-                //and we have to update original metas with the translated ones
-                foreach($translated_metas as $meta_key => $meta_value){
-                    $child_duplicate->update_meta_data($meta_key, $meta_value);
+                $child_duplicate_metas = $child_duplicate->get_meta_data();
+                //we loop through them
+                foreach($child_duplicate_metas as $meta_object){
+                    $meta_data = $meta_object->get_data();              //these metas are in a strange table with each entry being a wc_meta_data object that contains current_data and data tables. We can get the meta data using a function
+                    $translated_meta = $this->pat_translate_metas($source_lang, $target_lang, array($meta_data['key'] => $meta_data['value']));     //then we extract from that result key and value to be able to send it to our translation function. We translate only one meta at a time, to avoid looping these values over and over
+                    if (!empty($translated_meta) && $translated_meta[$meta_data['key']] != $meta_data['value']){
+                        $child_duplicate->update_meta_data($meta_data['key'], $translated_meta[$meta_data['key']]);           //finally we update the meta data
+                    }
                 }
 
 				//do_action( 'woocommerce_product_duplicate_before_save', $child_duplicate, $child );
