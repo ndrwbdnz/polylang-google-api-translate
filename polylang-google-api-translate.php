@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-if ( ! class_exists( 'WP_User_Manager' ) ) :
+if ( ! class_exists( 'PAT_translate_class' ) ) :
 
 class PAT_translate_class{
 
@@ -286,9 +286,9 @@ class PAT_translate_class{
 
         $post_to_translate = get_post($post_id);
         
-        $translated_content = $this->pat_translate_text($this->pat_api_key, $source_lang, $target_lang, $post_to_translate->post_content, $this->pat_strings_to_exclude);
-        $translated_excerpt = $this->pat_translate_text($this->pat_api_key, $source_lang, $target_lang, $post_to_translate->post_excerpt, $this->pat_strings_to_exclude);
-        $translated_title = $this->pat_translate_text($this->pat_api_key, $source_lang, $target_lang, $post_to_translate->post_title, $this->pat_strings_to_exclude);
+        $translated_content = $this->pat_translate_text($source_lang, $target_lang, $post_to_translate->post_content, $this->pat_strings_to_exclude);
+        $translated_excerpt = $this->pat_translate_text($source_lang, $target_lang, $post_to_translate->post_excerpt, $this->pat_strings_to_exclude);
+        $translated_title = $this->pat_translate_text($source_lang, $target_lang, $post_to_translate->post_title, $this->pat_strings_to_exclude);
         $translated_metas = $this->pat_translate_metas($source_lang, $target_lang, get_post_meta($post_id));
         $translated_taxonomies = $this->pat_translate_taxonomies($source_lang, $target_lang, get_post_taxonomies($post_id), $post_id);
         $translated_categories = array_key_exists('category', $translated_taxonomies) ? $translated_taxonomies['category'] : array();
@@ -344,10 +344,10 @@ class PAT_translate_class{
         //for the product - we first clone the product object to incluide all it's details, and then we translate 
 		$duplicate = clone $product;
 		$duplicate->set_id( 0 );
-        $duplicate->set_name($this->pat_translate_text($this->pat_api_key, $source_lang, $target_lang, $product->get_name()));
-        $duplicate->set_description($this->pat_translate_text($this->pat_api_key, $source_lang, $target_lang, $product->get_description()));
-        $duplicate->set_short_description($this->pat_translate_text($this->pat_api_key, $source_lang, $target_lang, $product->get_short_description()));
-        $duplicate->set_purchase_note($this->pat_translate_text($this->pat_api_key, $source_lang, $target_lang, $product->get_purchase_note()));
+        $duplicate->set_name($this->pat_translate_text($source_lang, $target_lang, $product->get_name()));
+        $duplicate->set_description($this->pat_translate_text($source_lang, $target_lang, $product->get_description()));
+        $duplicate->set_short_description($this->pat_translate_text($source_lang, $target_lang, $product->get_short_description()));
+        $duplicate->set_purchase_note($this->pat_translate_text($source_lang, $target_lang, $product->get_purchase_note()));
 		$duplicate->set_status( 'draft' );
 		$duplicate->set_slug( '' );
 
@@ -506,7 +506,7 @@ class PAT_translate_class{
             if ( $meta_flag != "exclude"){
                 //check if meta values are to be translated, if not - simply copy the values. Flag 1 means translate
                 if ( $meta_flag == "translate"){
-                    $translated_meta = $this->pat_translate_text($this->pat_api_key, $source_lang, $target_lang, $meta_value[0], $this->pat_strings_to_exclude);
+                    $translated_meta = $this->pat_translate_text($source_lang, $target_lang, $meta_value[0], $this->pat_strings_to_exclude);
                 } else {
                     $translated_meta = $meta_value[0];
                 }
@@ -551,7 +551,7 @@ class PAT_translate_class{
             //create the term in the target language. First check if it is to be translated.
             //either all terms from a given taxonomy are translated or none of them - the check is on the whole taxonomy level,  not on the level of individual term
             if($taxonomy_flag == "translate"){
-                $term_name_translation = $this->pat_translate_text($this->pat_api_key, $source_lang, $target_lang, $term->name, $this->pat_strings_to_exclude);
+                $term_name_translation = $this->pat_translate_text($source_lang, $target_lang, $term->name, $this->pat_strings_to_exclude);
             } else {
                 $term_name_translation = $term->name;
             }
@@ -566,8 +566,14 @@ class PAT_translate_class{
             }
             
             $translated_term = wp_insert_term($term_name_translation, $term->taxonomy,
-                                            array('parent'=> $translated_term_parent_id, 'slug' => sanitize_title($term_name_translation).'-'.$target_lang));
+                                            array('parent'=> $translated_term_parent_id, 
+                                                    'slug' => sanitize_title($term_name_translation).'-'.$target_lang));
             
+            $translated_term_meta = $this->pat_translate_metas($source_lang, $target_lang, get_term_meta($term->term_id));
+
+            foreach($translated_term_meta as $meta_key => $meta_value ){
+                add_term_meta($translated_term['term_id'], $meta_key, $meta_value);
+            }
 
             pll_set_term_language($translated_term['term_id'], $target_lang);
 
@@ -576,6 +582,8 @@ class PAT_translate_class{
             pll_save_term_translations($term_translations);
 
             $translated_term_id = $translated_term['term_id'];
+
+            do_action( 'pat_translated_term_action', $term->term_id, $translated_term['term_id'], $source_lang, $target_lang, $this->pat_strings_to_exclude);
 
         }
 
@@ -586,18 +594,18 @@ class PAT_translate_class{
 
  // Generic translate text function and API ------------------------------------------------------------------------------------------------------------------
     //public function so that it can be used also from other plugins etc
-    public function pat_translate_text($api_key, $source_lang, $target_lang, $text_to_translate, $excluded_strings = array()){
+    public function pat_translate_text($source_lang, $target_lang, $text_to_translate, $excluded_strings = array()){
 
         $placeholders = array();
         for( $i = 1 ; $i < count($excluded_strings); $i++ ){
-            $placeholders[] = '1NT' . $i . 'NT1';
+            $placeholders[] = '#$%' . $i . '%$#';
         }
         $text_to_translate = str_replace($excluded_strings, $placeholders, $text_to_translate);
         
         //prepare data to be translated
         $translation_method = 'POST';
         $translation_url = 'https://translation.googleapis.com/language/translate/v2';
-        $translation_data = array('source' => $source_lang, 'target' => $target_lang, 'q' => $text_to_translate, 'key' => $api_key);
+        $translation_data = array('source' => $source_lang, 'target' => $target_lang, 'q' => $text_to_translate, 'key' => $this->pat_api_key);
 
         //perform curl request
         $curl = curl_init();
@@ -711,4 +719,4 @@ function PAT_auto_translate() {
 	return PAT_translate_class::instance();
 }
 
-PAT_auto_translate();
+$pat_auto_translate_instance = PAT_auto_translate();
