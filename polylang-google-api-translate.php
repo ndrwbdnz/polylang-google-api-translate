@@ -199,43 +199,78 @@ class PAT_translate_class{
  // Admin actions ---------------------------------------------------------------------------------------------------------------
     
     function pat_auto_translate_handler() {
+
+        //get parameters from the request URL
+        // if (!check_admin_referer( 'new-post-translation' )){
+        //     $error_msg = 'The link has expired. Please try again.';
+        //     $translated_post_id = FALSE;
+        // } else
         
-        if (!check_admin_referer( 'new-post-translation' )){
-            $error_msg = 'The link has expired. Please try again.';
-            $translated_post_id = FALSE;
-        } else if( !isset($_REQUEST['from_post']) || !isset($_REQUEST['new_lang'])){
+        if( (!isset($_REQUEST['from_post']) || !isset($_REQUEST['from_tag']) ) && !isset($_REQUEST['new_lang'])){
             $error_msg = 'Cannot translate: post or language not provided';
             $translated_post_id = FALSE;
         } else {
-            $post_id = $_REQUEST['from_post'];
-            $source_lang = pll_get_post_language($post_id);
+            $from_post = isset($_REQUEST['from_post']) ? $_REQUEST['from_post'] : 0;
+            $post_type = isset($_REQUEST['post_type']) ? $_REQUEST['post_type'] : '';
             $target_lang = $_REQUEST['new_lang'];
-            $post_type = get_post_type($post_id);
-            $edit_post = isset($_REQUEST['edit_post']) ? $_REQUEST['edit_post'] : 0;
+            $edit_post = isset($_REQUEST['edit_post']) ? $_REQUEST['edit_post'] : 0;            //when post is edited
+            $taxonomy = isset($_REQUEST['taxonomy']) ? $_REQUEST['taxonomy'] : '';              
+            $from_tag = isset($_REQUEST['from_tag']) ? $_REQUEST['from_tag'] : 0;
             $error_msg = '';
 
-            $translated_post_id = $this->pat_translate_function($post_id, $source_lang, $target_lang, $post_type, $error_msg);
-        }
+            //depending on the above paramters do different translations
+            try{
+                //if this is post, page or product
+                if ($from_post != 0 && in_array($post_type, array('post', 'page', 'product'))) {
+                    
+                    $source_lang = pll_get_post_language($from_post);
+                    if (in_array($post_type, array('post', 'page'))){
+                        $translated_post_id = $this->pat_translate_post($from_post, $source_lang, $target_lang);
+                    } elseif ($post_type == 'product') {
+                        $translated_post_id = $this->pat_translate_product($from_post, $source_lang, $target_lang);
+                    }
 
-        if (!is_numeric($translated_post_id) && $error_msg != ''){
-            $location = add_query_arg( array(
-                'post_type' => $post_type,
-                'pat_translation_error' => 1,
-                'pat_translation_msg' => urlencode($error_msg),
-                'post_status' => 'all'
-            ), 'edit.php' );
-        } else if($edit_post == 1){
-            $location = add_query_arg( array(
-                'post' => $translated_post_id,
-                'action' => 'edit',
-                'pat_translation_msg' => urlencode("Translataion succesfull. Please review and publish the post.")
-            ), 'post.php' );
-        } else {
-            $location = add_query_arg( array(
-                'post_type' => $post_type,
-                'pat_translation_msg' => urlencode("Translataion succesfull. Please review and publish the post."),
-                'post_status' => 'all'
-            ), 'edit.php' );    
+                    //join the translated post with the original post
+                    pll_set_post_language($translated_post_id, $target_lang);
+                    $post_translations = pll_get_post_translations($from_post);       //get existing post translations
+                    $post_translations[$target_lang] = $translated_post_id;         //set post id for the translated language
+                    pll_save_post_translations($post_translations);                 //save new post translations
+
+                    if($edit_post == 1){                                                          //when post is edited
+                        $location = add_query_arg( array(
+                            'post' => $translated_post_id,
+                            'action' => 'edit',
+                            'pat_translation_msg' => urlencode("Translataion succesfull. Please review and publish the post.")
+                        ), 'post.php' );
+                    } else {
+                        $location = add_query_arg( array(
+                            'post_type' => $post_type,
+                            'pat_translation_msg' => urlencode("Translataion succesfull. Please review and publish the post."),
+                            'post_status' => 'all'
+                        ), 'edit.php' );    
+                    }
+
+                } elseif ($taxonomy != '' && $from_tag != 0) {
+                    $source_lang = pll_get_term_language($from_tag);
+                    $this->pat_translate_taxonomy($source_lang, $target_lang, $from_tag, $taxonomy);
+
+                    $location = add_query_arg( array(
+                        'taxonomy' => $taxonomy,
+                        'post_type' => $post_type,
+                        'pat_translation_msg' => urlencode("Translataion succesfull. Please review translations.")
+                    ), 'edit-tags.php' );   
+                }
+
+            } catch (Exception $e) {
+                $error_msg = 'Translation error: '.$e->getMessage();
+
+                $location = add_query_arg( array(
+                    'post_type' => $post_type,
+                    'pat_translation_error' => 1,
+                    'pat_translation_msg' => urlencode($error_msg),
+                    'post_status' => 'all'
+                ), 'edit.php' );
+            }
         }
 
         wp_redirect( admin_url( $location ) );
@@ -245,9 +280,9 @@ class PAT_translate_class{
 
     function pat_auto_translate_notice() {
 
-        global $pagenow, $typenow;
-
-        if( in_array($typenow, array('post', 'page', 'product')) && $pagenow == 'edit.php' && isset( $_REQUEST['pat_translation_msg'] )){
+        global $pagenow; //, $typenow;
+        //in_array($typenow, array('post', 'page', 'product'))
+        if( in_array($pagenow, array('edit.php', 'edit-tags.php')) && isset( $_REQUEST['pat_translation_msg'] )){
             if (isset( $_REQUEST['pat_translation_error'] )){
                 echo "<div class=\"notice notice-error is-dismissible\"><p>{$_REQUEST['pat_translation_msg']}</p></div>";
             } else {
@@ -257,30 +292,7 @@ class PAT_translate_class{
 
     }
 
- // Main translation functions - post (and page) and product ---------------------------------------------------------------------------------------------------------------
-
-    private function pat_translate_function($post_id, $source_lang, $target_lang, $post_type = 'post', &$error_msg = ''){      
-
-        try{
-            if (in_array($post_type, array('post', 'page'))){
-                $translated_post_id = $this->pat_translate_post($post_id, $source_lang, $target_lang);
-            } elseif ($post_type == 'product') {
-                $translated_post_id = $this->pat_translate_product($post_id, $source_lang, $target_lang);
-            }
-
-        } catch (Exception $e) {
-            $error_msg = 'Translation error: '.$e->getMessage();
-            return FALSE;
-        }
-
-        //join the translated post with the original post
-        pll_set_post_language($translated_post_id, $target_lang);
-        $post_translations = pll_get_post_translations($post_id);       //get existing post translations
-        $post_translations[$target_lang] = $translated_post_id;         //set post id for the translated language
-        pll_save_post_translations($post_translations);                 //save new post translations
-
-    }
-    
+ // Main translation functions - post (and page) and product ---------------------------------------------------------------------------------------------------------------   
     
     private function pat_translate_post($post_id, $source_lang, $target_lang){
 
@@ -290,7 +302,7 @@ class PAT_translate_class{
         $translated_excerpt = $this->pat_translate_text($source_lang, $target_lang, $post_to_translate->post_excerpt, $this->pat_strings_to_exclude);
         $translated_title = $this->pat_translate_text($source_lang, $target_lang, $post_to_translate->post_title, $this->pat_strings_to_exclude);
         $translated_metas = $this->pat_translate_metas($source_lang, $target_lang, get_post_meta($post_id));
-        $translated_taxonomies = $this->pat_translate_taxonomies($source_lang, $target_lang, get_post_taxonomies($post_id), $post_id);
+        $translated_taxonomies = $this->pat_translate_post_taxonomies($source_lang, $target_lang, get_post_taxonomies($post_id), $post_id);
         $translated_categories = array_key_exists('category', $translated_taxonomies) ? $translated_taxonomies['category'] : array();
         $translated_tags = array_key_exists('post_tag', $translated_taxonomies) ? $translated_taxonomies['post_tag'] : array();
 
@@ -380,7 +392,7 @@ class PAT_translate_class{
             }
         }
 
-        $translated_taxonomies = $this->pat_translate_taxonomies($source_lang, $target_lang, get_post_taxonomies($post_id), $post_id);
+        $translated_taxonomies = $this->pat_translate_post_taxonomies($source_lang, $target_lang, get_post_taxonomies($post_id), $post_id);
         $duplicate->set_tag_ids($translated_taxonomies['product_tag']);
         $duplicate->set_category_ids($translated_taxonomies['product_cat']);
 
@@ -494,6 +506,26 @@ class PAT_translate_class{
         return false;
     }
 
+    private function pat_translate_taxonomy ($source_lang, $target_lang, $from_tag, $taxonomy){
+        $translated_tag = $this->pat_translate_terms($source_lang, $target_lang, $from_tag, $taxonomy, "translate");
+
+        //besides just transtaling terms, we also want to automatically update any translated posts that should have the translated terms linked to them
+
+        $posts = get_posts( array(  'post_type' => 'any',
+                                    'post_status' => array('publish', 'draft'),
+                                    'numberposts' => -1,
+                                    'tax_query' => array(array('taxonomy' => $taxonomy, 'terms' => $from_tag))
+                                )
+                            );
+
+        foreach ($posts as $post){                                          //take each post that has this tag
+            $post_translations = pll_get_post_translations($post->ID);          //see if there are linked translated posts
+            //for the translated post in the new language (if exixts)
+            wp_set_object_terms($post_translations[$target_lang], $translated_tag, $taxonomy);
+        }
+
+    }
+
  // Specialized translation sub-functions - metas, taxonomies and terms -------------------------------------------------------------------------------------
     //translate metas
     private function pat_translate_metas($source_lang, $target_lang, $post_metas){
@@ -519,7 +551,7 @@ class PAT_translate_class{
     }
 
     //translate taxonomies
-    private function pat_translate_taxonomies($source_lang, $target_lang, $post_taxonomies, $post_id){
+    private function pat_translate_post_taxonomies($source_lang, $target_lang, $post_taxonomies, $post_id){
 
         $translated_taxonomies = array();
 
@@ -533,7 +565,7 @@ class PAT_translate_class{
                 $counter = 0;
                 foreach ($terms as $term) {
                     //this function is called recursively to walk up the tree of terms and recreate the term tree in the target language (parent terms)
-                    $translated_term_id = $this->pat_translate_terms($source_lang, $target_lang, $term, $taxonomy_flag);
+                    $translated_term_id = $this->pat_translate_terms($source_lang, $target_lang, $term, $taxonomy, $taxonomy_flag);
                     $translated_term = get_term($translated_term_id, $term->taxonomy);
                     $translated_taxonomies[$translated_term->taxonomy][$counter] = $translated_term->term_id;
                     $counter = $counter + 1;
@@ -544,9 +576,16 @@ class PAT_translate_class{
     }
     
     //recursively translate terms
-    private function pat_translate_terms($source_lang, $target_lang, $term, $taxonomy_flag){
+    private function pat_translate_terms($source_lang, $target_lang, $term, $term_taxonomy, $taxonomy_flag){
+        
+        //if term is term id
+        if (is_numeric($term)){
+            $term = get_term($term, $term_taxonomy);
+        }
+        
         //see if the term alraedy exists in the target language
         $translated_term_id = pll_get_term($term->term_id, $target_lang);
+        
         if (!$translated_term_id) {
             //create the term in the target language. First check if it is to be translated.
             //either all terms from a given taxonomy are translated or none of them - the check is on the whole taxonomy level,  not on the level of individual term
@@ -558,11 +597,11 @@ class PAT_translate_class{
             
             //regardless if the term name should be translated, the term is another language version, so we have still to create it
 
-            //see if the orignal term had a paretn - this is the recursive part - walking up the taxonomy tree
+            //see if the orignal term had a parent - this is the recursive part - walking up the taxonomy tree
             $translated_term_parent_id = 0;
             if ($term->parent != 0){
                 $parent_term = get_term($term->parent, $term->taxonomy);
-                $translated_term_parent_id = $this->pat_translate_terms($source_lang, $target_lang, $parent_term, $taxonomy_flag);
+                $translated_term_parent_id = $this->pat_translate_terms($source_lang, $target_lang, $parent_term, $term_taxonomy, $taxonomy_flag);
             }
             
             $translated_term = wp_insert_term($term_name_translation, $term->taxonomy,
@@ -583,6 +622,7 @@ class PAT_translate_class{
 
             $translated_term_id = $translated_term['term_id'];
 
+            //enable further translations and changes if necessary
             do_action( 'pat_translated_term_action', $term->term_id, $translated_term['term_id'], $source_lang, $target_lang, $this->pat_strings_to_exclude);
 
         }

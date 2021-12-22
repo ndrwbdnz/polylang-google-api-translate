@@ -13,15 +13,19 @@ jQuery(
 		var CONTROL_INTERVAL = setInterval(function(){
 			// Check if element exist
 			if($('td.pll-edit-column').length > 0){
-				$('td.pll-edit-column').each(function($this){
-					$a = $(this).children('a')[0];
-					$link = new URL($a.href);
-					$par = $link.searchParams;
-					$par.append('action', 'pat_auto_translate');
-					$par.append('edit_post', '1');
-					$link.pathname = '/wp-admin/admin-post.php'
-					$link_str = $link.toString();
-					$(this).after('<td class="pll-edit-column pll-column-icon"><a href="' + $link_str + '" class="pat_auto_translate_icon pat_auto_translate_icon_small"><span class="screen-reader-text">Add auto translation</span></td>');
+				$('td.pll-edit-column').find('a').each(function($this){			//.each(function($this){
+					if(this.classList.contains('pll_icon_add')){
+						$link = new URL(this.href);
+						$par = $link.searchParams;
+						$par.append('action', 'pat_auto_translate');
+						$par.append('edit_post', '1');
+						$link.pathname = '/wp-admin/admin-post.php'
+						$link_str = $link.toString();
+						$(this.parentElement).after('<td class="pll-edit-column pll-column-icon"><a href="' + $link_str + '" class="pat_auto_translate_icon pat_auto_translate_icon_small"><span class="screen-reader-text">Add auto translation</span></td>');
+					} else {
+						$(this.parentElement).after('<td class="pll-edit-column pll-column-icon"></td>');
+					}
+
 				});
 				clearInterval(CONTROL_INTERVAL);
 			}
