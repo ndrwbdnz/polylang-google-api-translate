@@ -521,7 +521,7 @@ class PAT_translate_class{
         foreach ($posts as $post){                                          //take each post that has this tag
             $post_translations = pll_get_post_translations($post->ID);          //see if there are linked translated posts
             //for the translated post in the new language (if exixts)
-            wp_set_object_terms($post_translations[$target_lang], $translated_tag, $taxonomy);
+            wp_set_object_terms($post_translations[$target_lang], $translated_tag, $taxonomy, true);  //true means append (not replace) terms
         }
 
     }
