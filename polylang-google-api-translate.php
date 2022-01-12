@@ -35,6 +35,16 @@ class PAT_translate_class{
 
     public function __construct(){
 
+        if ( !function_exists('pll_get_post_language')
+        || !function_exists('pll_get_post')
+        || !function_exists('pll_set_post_language')
+        || !function_exists('pll_save_post_translations')
+        || !function_exists('pll_set_term_language')
+        || !function_exists('pll_save_term_translations')
+        || !function_exists('pll_is_translated_post_type')){
+            //return FALSE;                                       //plugin requires the above functions to exist
+        }
+
         //get settings values from database
         $this->pat_get_options();
 
@@ -55,11 +65,35 @@ class PAT_translate_class{
         add_action('admin_print_styles', array( $this, 'pat_admin_enqueue_styles') );
 
         //add user interface functions (links are created in js script)
+        add_action('current_screen', array( $this, 'pat_set_bulk_actions_hooks' ), 10, 1);
         add_action('admin_post_pat_auto_translate', array( $this, 'pat_auto_translate_handler' ));
         add_action('admin_notices', array( $this, 'pat_auto_translate_notice'));
         
     }
 
+ // User interface
+    //auto-translate icons are set in the java script
+    //below bulk actions are set
+
+    function pat_set_bulk_actions_hooks($current_screen){
+        if ( !pll_is_translated_post_type( $current_screen->post_type) || ( array_key_exists( 'post_status', $_GET ) && 'trash' === $_GET['post_status'] ) ) {
+			return;
+		}
+        add_filter( "bulk_actions-{$current_screen->id}", array( $this, 'pat_add_bulk_action' ) );
+        add_action( "handle_bulk_actions-{$current_screen->id}", array( $this, 'pat_handle_bulk_action' ), 10, 3 );
+        // add_action( 'admin_footer', array( $this, 'display_form' ) );
+        // add_action( 'admin_notices', array( $this, 'display_notices' ) );
+        // // Special case where the wp_redirect() happens before the bulk action is triggered.
+        // if ( 'edit' === $current_screen->base ) {
+        // 	add_action( 'wp_redirect', array( $this, 'parse_request_before_redirect' ) );
+        // }
+    }
+
+    function pat_add_bulk_action($actions) {
+        $actions['pat_link_translations'] = 'Re-link Translations';
+        return $actions;
+    }
+    
 
  // Settings ---------------------------------------------------------------------------------------------------------------
     
@@ -198,7 +232,7 @@ class PAT_translate_class{
 
  // Admin actions ---------------------------------------------------------------------------------------------------------------
     
-    function pat_auto_translate_handler() {
+    public function pat_auto_translate_handler() {
 
         //get parameters from the request URL
         // if (!check_admin_referer( 'new-post-translation' )){
@@ -209,6 +243,14 @@ class PAT_translate_class{
         if( (!isset($_REQUEST['from_post']) || !isset($_REQUEST['from_tag']) ) && !isset($_REQUEST['new_lang'])){
             $error_msg = 'Cannot translate: post or language not provided';
             $translated_post_id = FALSE;
+            $post_type = isset($_REQUEST['post_type']) ? $_REQUEST['post_type'] : '';
+            $location = add_query_arg( array(
+                'post_type' => $post_type,
+                'pat_translation_error' => 1,
+                'pat_translation_msg' => urlencode($error_msg),
+                'post_status' => 'all'
+            ), 'edit.php' );
+
         } else {
             $from_post = isset($_REQUEST['from_post']) ? $_REQUEST['from_post'] : 0;
             $post_type = isset($_REQUEST['post_type']) ? $_REQUEST['post_type'] : '';
@@ -263,7 +305,6 @@ class PAT_translate_class{
 
             } catch (Exception $e) {
                 $error_msg = 'Translation error: '.$e->getMessage();
-
                 $location = add_query_arg( array(
                     'post_type' => $post_type,
                     'pat_translation_error' => 1,
@@ -278,7 +319,77 @@ class PAT_translate_class{
 
     }
 
-    function pat_auto_translate_notice() {
+    public function pat_handle_bulk_action( $location, $action, $items ) {
+        if ($action ==  'pat_link_translations'){
+
+            if (!$location){
+                $location = $_POST['_wp_http_referer'];
+            }
+
+            $page = parse_url($location, PHP_URL_PATH);
+            if ($page == '/wp-admin/edit.php'){
+                $page = "post";
+            } elseif($page == '/wp-admin/edit-tag.php'){
+                $page = "tag";
+            } else {
+                $error_msg = 'This item type cannot be linked.';
+                $location = add_query_arg( array(
+                    'pat_translation_error' => 1,
+                    'pat_translation_msg' => urlencode($error_msg)
+                ), $location);
+                return $location;
+            }
+
+            if( empty($items) ){
+                $error_msg = 'Please select items first';
+                $location = add_query_arg( array(
+                    'pat_translation_error' => 1,
+                    'pat_translation_msg' => urlencode($error_msg)
+                ), $location);
+                return $location;
+                
+            } else {
+                //if the action is to break translation links
+                //for each item - break the links
+
+                //the simplest approach is to first break all translation links of each item
+
+                
+                $item_langs = array();              //this is for checking if there is more than one item with the same language
+                $new_translation_links = array();   //this is for keeping new translation links
+
+                foreach ($items as $item){
+                    $item_lang = ($page == 'post')? pll_get_post_language($item) : pll_get_term_language($item);
+
+                    if (key_exists($item_lang, $item_langs)){                       //if another item with the same language was aready processed - exit with error message
+                        $error_msg = 'More than one items with the language '.$item_lang.' selected. Please select only items with different languages and try again.';
+                        $location = add_query_arg( array(
+                            'pat_translation_error' => 1,
+                            'pat_translation_msg' => urlencode($error_msg)
+                        ), $location);
+                        return $location;
+                    } else {
+                        $item_langs[$item_lang] = $item;
+                    }
+
+                    //clean item links
+                    $item_translations = ($page == 'post')? pll_get_post_translations($item) : pll_get_term_translations($item);        //get existing post translations
+                    $item_translations[$item_lang] = "";                                                                                //remove post id for given language
+                    ($page == 'post')? pll_save_post_translations($item_translations) : pll_save_term_translations($item_translations); //save new post translations
+
+                    $new_translation_links[$item_lang] = $item;
+                }
+
+                ($page == 'post')? pll_save_post_translations($new_translation_links) : pll_save_term_translations($new_translation_links); //save new post translations
+                
+            }
+            
+        }
+
+        return $location;
+	}
+
+    public function pat_auto_translate_notice() {
 
         global $pagenow; //, $typenow;
         //in_array($typenow, array('post', 'page', 'product'))
@@ -526,6 +637,19 @@ class PAT_translate_class{
 
     }
 
+    private function pat_link_translations (){
+
+        // pll_set_post_language($translated_post_id, $target_lang);
+        // $post_translations = pll_get_post_translations($from_post);       //get existing post translations
+        // $post_translations[$target_lang] = $translated_post_id;         //set post id for the translated language
+        // pll_save_post_translations($post_translations);                 //save new post translations
+
+        // $term_translations = pll_get_term_translations($term->term_id);       //get existing post translations
+        // $term_translations[$target_lang] = $translated_term['term_id'];         //set post id for the translated language
+        // pll_save_term_translations($term_translations);
+
+    }
+
  // Specialized translation sub-functions - metas, taxonomies and terms -------------------------------------------------------------------------------------
     //translate metas
     private function pat_translate_metas($source_lang, $target_lang, $post_metas){
@@ -735,21 +859,6 @@ class PAT_translate_class{
 
 		$product->set_slug( $root_slug . '-' . ( $max_suffix + 1 ) );
 	}
-
-    private function pat_pll_functions_exist(){
-                //check if polylang functions exists
-        if ( !function_exists('pll_get_post_language')
-        || !function_exists('pll_the_languages')
-        || !function_exists('pll_get_post')
-        || !function_exists('pll_set_post_language')
-        || !function_exists('pll_save_post_translations')
-        || !function_exists('pll_set_term_language')
-        || !function_exists('pll_save_term_translations')){
-            return FALSE;
-        } else {
-            return TRUE;
-        }
-    }
 
 }
 

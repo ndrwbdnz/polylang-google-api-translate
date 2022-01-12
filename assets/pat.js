@@ -1,5 +1,7 @@
 jQuery(
 	function( $ ) {
+
+		//add auto-translate icons on post list page
         $('table.table-view-list').find('a.pll_icon_add').each(function($this){
 			$link = new URL(this.href);
 			$par = $link.searchParams;
@@ -9,6 +11,7 @@ jQuery(
 			$(this).after('<a href="' + $link_str + '" class="pat_auto_translate_icon"><span class="screen-reader-text">Add auto translation</span>');
 		});
 
+		//add auto-translate icons on post-edit page
 		//https://stackoverflow.com/questions/6386128/how-can-i-call-a-function-after-an-element-has-been-created-in-jquery
 		var CONTROL_INTERVAL = setInterval(function(){
 			// Check if element exist
@@ -30,5 +33,6 @@ jQuery(
 				clearInterval(CONTROL_INTERVAL);
 			}
 		}, 500);
+
 	}
 );
