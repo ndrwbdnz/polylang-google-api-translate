@@ -35,15 +35,9 @@ class PAT_translate_class{
 
     public function __construct(){
 
-        if ( !function_exists('pll_get_post_language')
-        || !function_exists('pll_get_post')
-        || !function_exists('pll_set_post_language')
-        || !function_exists('pll_save_post_translations')
-        || !function_exists('pll_set_term_language')
-        || !function_exists('pll_save_term_translations')
-        || !function_exists('pll_is_translated_post_type')){
-            //return FALSE;                                       //plugin requires the above functions to exist
-        }
+		if ( ! ( $this->pat_is_plugin_active_or_multisite( 'polylang/polylang.php' ) || $this->pat_is_plugin_active_or_multisite( 'polylang-pro/polylang.php' ) ) ) {
+			return;
+		}
 
         //get settings values from database
         $this->pat_get_options();
@@ -856,6 +850,25 @@ class PAT_translate_class{
 
 		$product->set_slug( $root_slug . '-' . ( $max_suffix + 1 ) );
 	}
+
+    private function pat_is_plugin_active_or_multisite($plugin){
+
+        $active = in_array( $plugin, (array) get_option( 'active_plugins', array() ), true );
+
+        if ( $active ) {
+            return true;
+        }
+
+		if ( is_multisite() ) {
+            $plugins = get_site_option( 'active_sitewide_plugins' );
+
+            if ( isset( $plugins[ $plugin ] ) ) {
+                return true;
+            }
+        }
+
+		return false;
+    }
 
 }
 
