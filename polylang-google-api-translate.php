@@ -322,14 +322,11 @@ class PAT_translate_class{
     public function pat_handle_bulk_action( $location, $action, $items ) {
         if ($action ==  'pat_link_translations'){
 
-            if (!$location){
-                $location = $_POST['_wp_http_referer'];
-            }
-
-            $page = parse_url($location, PHP_URL_PATH);
-            if ($page == '/wp-admin/edit.php'){
+            global $pagenow;
+            $page = '';
+            if ($pagenow == 'edit.php'){
                 $page = "post";
-            } elseif($page == '/wp-admin/edit-tag.php'){
+            } elseif($pagenow == 'edit-tags.php'){
                 $page = "tag";
             } else {
                 $error_msg = 'This item type cannot be linked.';
