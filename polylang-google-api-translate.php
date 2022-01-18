@@ -62,6 +62,9 @@ class PAT_translate_class{
         add_action('current_screen', array( $this, 'pat_set_bulk_actions_hooks' ), 10, 1);
         add_action('admin_post_pat_auto_translate', array( $this, 'pat_auto_translate_handler' ));
         add_action('admin_notices', array( $this, 'pat_auto_translate_notice'));
+
+        //ajax handler for strings translations
+        add_action( 'wp_ajax_pat_string_translate', array($this, 'pat_string_translate') );
         
     }
 
@@ -210,15 +213,27 @@ class PAT_translate_class{
     function pat_admin_enqueue_scripts(){
         //if this is post, page or product edit table page
         if ( function_exists('get_current_screen')) {
-            if ( in_array(get_current_screen()->post_type, array('post', 'page', 'product'))){
+            if ( in_array(get_current_screen()->post_type, array('post', 'page', 'product')) || 
+                (array_key_exists( 'page', $_GET ) && 'mlang_strings' === $_GET['page'] )
+            ){
                 wp_enqueue_script( 'pat-js', plugin_dir_url( __FILE__ ) . 'assets/pat.js', array('jquery'), null, true );
+                wp_localize_script(
+                    'pat-js',
+                    'pat_js_obj',
+                    array(
+                        'ajaxurl' => admin_url( 'admin-ajax.php' ),
+                        'nonce' => wp_create_nonce('pat-ajax-nonce')
+                    )
+                );
             }
         }
     }
 
     function pat_admin_enqueue_styles(){
         if ( function_exists('get_current_screen')) {
-            if ( in_array(get_current_screen()->post_type, array('post', 'page', 'product'))){
+            if ( in_array(get_current_screen()->post_type, array('post', 'page', 'product')) || 
+                (array_key_exists( 'page', $_GET ) && 'mlang_strings' === $_GET['page'] )
+            ){
                 wp_enqueue_style( 'pat-css',  plugin_dir_url( __FILE__ ) . 'assets/pat.css');
             }
         }
@@ -392,6 +407,29 @@ class PAT_translate_class{
             }
         }
 
+    }
+
+    public function pat_string_translate (){
+        $nonce = $_POST['nonce'];
+
+        if ( ! wp_verify_nonce( $nonce, 'pat-ajax-nonce' ) ) {
+            die( 'Nonce value cannot be verified.' );
+        }
+     
+        $translated_text = '';
+
+        // The $_REQUEST contains all the data sent via ajax
+        if ( isset($_REQUEST) ) {
+            $source_lang = pll_default_language();
+            $target_lang = $_REQUEST['to_lang'];
+            $text_to_translate = $_REQUEST['string_to_translate'];
+
+            $translated_text = $this->pat_translate_text($source_lang, $target_lang, $text_to_translate, $this->pat_strings_to_exclude);
+        }
+
+        echo $translated_text;
+        
+        die();
     }
 
  // Main translation functions - post (and page) and product ---------------------------------------------------------------------------------------------------------------   
