@@ -420,7 +420,7 @@ class PAT_translate_class{
 
         // The $_REQUEST contains all the data sent via ajax
         if ( isset($_REQUEST) ) {
-            $source_lang = pll_default_language();
+            $source_lang = ''; //pll_default_language();        //empty source lang firces google to detect language
             $target_lang = $_REQUEST['to_lang'];
             $text_to_translate = $_REQUEST['string_to_translate'];
 
