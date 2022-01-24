@@ -17,8 +17,8 @@ jQuery(
 			// Check if element exist
 			if($('td.pll-edit-column').length > 0){
 				$('td.pll-edit-column').find('a').each(function($this){			//.each(function($this){
-					if(this.classList.contains('pll_icon_add')){
-						$link = new URL(this.href);
+					$link = new URL(this.href);
+					if ($link.pathname == '/wp-admin/post-new.php' || this.classList.contains('pll_icon_add')){
 						$par = $link.searchParams;
 						$par.append('action', 'pat_auto_translate');
 						$par.append('edit_post', '1');

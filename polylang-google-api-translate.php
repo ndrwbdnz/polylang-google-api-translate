@@ -108,7 +108,8 @@ class PAT_translate_class{
 
     function pat_register_settings_tabs( $tabs ) {
         return array(
-            'general' => __( 'General' )
+            'general' => __( 'General' ),
+            //'docs' => __( 'Documentation' )
         );
     }
 
@@ -160,6 +161,9 @@ class PAT_translate_class{
                     'options' => $this->pat_get_taxonomies(),
                 ),
             ),
+            // 'docs' => array(
+
+            // ),
         );
     
         return $settings;
