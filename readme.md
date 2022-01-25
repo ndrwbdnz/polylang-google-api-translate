@@ -3,9 +3,28 @@ Simple plugin for translating wordpress posts, pages and woocommerce products us
 Short documentation (full docs in the making):
 
 1. Install and configure Polylang, set up your languages, etc.
+
 2. Please check how to get Google API key here: [https://translatepress.com/docs/automatic-translation/generate-google-api-key/](https://translatepress.com/docs/automatic-translation/generate-google-api-key/)
+
 3. Enable Polylang Google API Translate plugin
-4. Please enter your API key in Wordpress -> Settings -> Polylang Auto Translate. More about other settings below.
+
+4. Please enter your API key in Wordpress -> Settings -> Polylang Auto Translate.
+
+Settings page should be quite clear.
+
+![settings](https://raw.githubusercontent.com/ndrwbdnz/polylang-google-api-translate/master/docs/settings.jpg)
+
+Please note:
+polylang works in such a way, that when a post in another language is created, all the content is duplicated and the two posts (say in English and in French) are linked by Polylang. It does not matter what the contents of the posts are - Polylang considers them to be different language versions of the same post. You may have a "Happy birthday" post in the English verion of the post and an "Obituary" in the French version. The user would see on the front-end a "Happy birthday" post, but then if he switches to French language, he would see an "Obituary" post. It is all up to content creators to ensure that the content on the page is meaningfull.
+
+Polylang Google API Translate plugin takes the content of the post and the language code that is assigned to this post, and tries to translate it using Goolge Translate API to the target language. If the content is garbage and / or it is in a different language than the language code assigned, then the results of the translation will be poor.
+
+Same as post contens, also all taxonomies and metas are duplicated by polylang and assigned a lanugage code and linked together in a "same content different language" relationship.
+
+Depending on your content, some taxonomies and metas should be translated (e.g. the category and tag name), some will be required to be only copied (duplicated, but not translated. e.g. if you have a likes counter - there is no sense in translating a number, but you may want this number to be displayed in the translated version nontheless), and some should stay only in the original post, because they should be different for each language version of the post (e.b. a comment counter - the English version of the post might have 100 comments, but the French version only 5).
+
+You should select which metas and taxonomies you would like to leave out, and which you would like to translate. All the rest will be duplicated.
+
 5. Go to Wordpress -> Posts.
 
 In the languages columns you will see something like below image. If you don't see the languages column, please click on "Screen Options" in the top-right corner and select each of the language that you want to see.
@@ -30,24 +49,7 @@ If you are in the gutenberg block-edit screen, please click on the polylang icon
 Here the process is the same as in the case of post table translation.
 The difference is that you will be redirected to the newly creadted translarted post, where you can check the changes and publish it.
 
-7. Settings
-
-Settings page should be quite clear.
-
-![settings](https://raw.githubusercontent.com/ndrwbdnz/polylang-google-api-translate/master/docs/settings.jpg)
-
-Please note:
-polylang works in such a way, that when a post in another language is created, all the content is duplicated and the two posts (say in English and in French) are linked by Polylang. It does not matter what the contents of the posts are - Polylang considers them to be different language versions of the same post. You may have a "Happy birthday" post in the English verion of the post and an "Obituary" in the French version. The user would see on the front-end a "Happy birthday" post, but then if he switches to French language, he would see an "Obituary" post. It is all up to content creators to ensure that the content on the page is meaningfull.
-
-Polylang Google API Translate plugin takes the content of the post and the language code that is assigned to this post, and tries to translate it using Goolge Translate API to the target language. If the content is garbage and / or it is in a different language than the language code assigned, then the results of the translation will be poor.
-
-Same as post contens, also all taxonomies and metas are duplicated by polylang and assigned a lanugage code and linked together in a "same content different language" relationship.
-
-Depending on your content, some taxonomies and metas should be translated (e.g. the category and tag name), some will be required to be only copied (duplicated, but not translated. e.g. if you have a likes counter - there is no sense in translating a number, but you may want this number to be displayed in the translated version nontheless), and some should stay only in the original post, because they should be different for each language version of the post (e.b. a comment counter - the English version of the post might have 100 comments, but the French version only 5).
-
-You should select which metas and taxonomies you would like to leave out, and which you would like to translate. All the rest will be duplicated.
-
-8. Translation of tags, categories, attributes, etc. (taxonomies and meta)
+7. Translation of tags, categories, attributes, etc. (taxonomies and meta)
 
 If the post has tags, categories, etc, they will be translated automatically and linked together, unless they are selected in the settings to be left out in the settings panel.
 
@@ -59,7 +61,7 @@ The plugin works like this:
 - if it does, simply link this translation
 - if not - create a new translation and either translate the original, or duplicate the content
 
-9. Linking translations
+8. Linking translations
 
 There is an option in the bulk-edit dropdown called "Re-link tranlsations". It works both for posts and tags, categories, etc.
 This option is to quickly re-link translations if the links are broken.
@@ -67,17 +69,17 @@ This option does not do any automatic translation, etc.
 Please select a few posts or tags, categories, etc, each of a different language and use this option.
 The plugin will clear all the language relations of the selected items and then link them together as different language versions of the same content.
 
-10. Translating pages
+9. Translating pages
 
 Translation of pages works the same as for posts.
 
-11. Woocomemrce products
+10. Woocomemrce products
 
 Woocommerce products are translated in the same way as posts. The internal functions of the plugin are diffrent, because products are more complex.
 
 Translating product variations should work, but has not been tested. Your contribution is welcome.
 
-12. Other post types
+11. Other post types
 
 If you would like to translate other post types, please use Polylang filter pll_get_post_types to include your post type in the translatable post type, like so:
 ```
@@ -93,6 +95,10 @@ If your post has specific fileds, or structure, the automatic translation might 
 Polylang reference can be found here:
 [https://polylang.wordpress.com/documentation/documentation-for-developers/](https://polylang.wordpress.com/documentation/documentation-for-developers/)
 
-13. Updating translated content
+12. Updating translated content
 
 If you have posts that are different language versions and linked together, and you edit the content of one of the posts, then you have to manually update the remaining posts.
+
+13. Translating strings
+
+If you go to Languages -> String translations you will see that there is an auto-translate icon to the right of each text field. Upon clicking it, the plugin will take the main string (the value in the left-most "String" column), and try to translate it to the language that is assigned to the given text field. The plugin does not send any original language code to Google Translate, so Google Translate will try to determine the language of the original.

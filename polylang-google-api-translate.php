@@ -338,7 +338,8 @@ class PAT_translate_class{
     }
 
     public function pat_handle_bulk_action( $location, $action, $items ) {
-        if ($action ==  'pat_link_translations' || $action == 'pat_mass_translate'){
+
+        if ($action == 'pat_link_translations' || $action == 'pat_mass_translate'){
 
             global $pagenow;
             $page = '';
@@ -363,7 +364,7 @@ class PAT_translate_class{
                 ), $location);
                 return $location;
                 
-            } elseif ($action ==  'pat_link_translations') {
+            } elseif ($action == 'pat_link_translations') {
                 //the simplest approach is to first break all translation links of each item
                 $item_langs = array();              //this is for checking if there is more than one item with the same language
                 $new_translation_links = array();   //this is for keeping new translation links
@@ -392,7 +393,7 @@ class PAT_translate_class{
 
                 ($page == 'post')? pll_save_post_translations($new_translation_links) : pll_save_term_translations($new_translation_links); //save new post translations
                 
-            } elseif ($action ==  'pat_mass_translate'){
+            } elseif ($action == 'pat_mass_translate'){
                 
             }
             
