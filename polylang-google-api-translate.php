@@ -78,16 +78,11 @@ class PAT_translate_class{
 		}
         add_filter( "bulk_actions-{$current_screen->id}", array( $this, 'pat_add_bulk_action' ) );
         add_action( "handle_bulk_actions-{$current_screen->id}", array( $this, 'pat_handle_bulk_action' ), 10, 3 );
-        // add_action( 'admin_footer', array( $this, 'display_form' ) );
-        // add_action( 'admin_notices', array( $this, 'display_notices' ) );
-        // // Special case where the wp_redirect() happens before the bulk action is triggered.
-        // if ( 'edit' === $current_screen->base ) {
-        // 	add_action( 'wp_redirect', array( $this, 'parse_request_before_redirect' ) );
-        // }
     }
 
     function pat_add_bulk_action($actions) {
         $actions['pat_link_translations'] = 'Re-link Translations';
+        $actions['pat_mass_translate'] = 'Auto-translate selected';
         return $actions;
     }
     
@@ -184,31 +179,41 @@ class PAT_translate_class{
     }
 
     private function pat_get_metas(){
-
-        global $wpdb;
-        $p = $wpdb->get_blog_prefix();
-        $query = $wpdb->prepare( "SELECT DISTINCT pm.meta_key as value, pm.meta_key as label  FROM {$p}postmeta pm
-                                LEFT JOIN {$p}posts p ON p.ID = pm.post_id 
-                                WHERE p.post_type in ('post', 'page', 'product')
-                                AND pm.meta_key not in ('_product_attributes')
-                                ORDER BY pm.meta_key");
-        $result = $wpdb->get_results($query);
-
+        //if we are on the settings page
+        if ($_GET['page'] === 'pat-settings'){
+            global $wpdb;
+            $p = $wpdb->get_blog_prefix();
+            $query = $wpdb->prepare( "SELECT DISTINCT pm.meta_key as value, pm.meta_key as label  FROM {$p}postmeta pm
+                                    LEFT JOIN {$p}posts p ON p.ID = pm.post_id 
+                                    WHERE p.post_type in ('post', 'page', 'product')
+                                    AND pm.meta_key not in ('_product_attributes')
+                                    ORDER BY pm.meta_key");
+            $result = $wpdb->get_results($query);    
+        } else {
+            //else we don't need this data now
+            $result = array();
+        }
+        
         return $result;
         
     }
 
     private function pat_get_taxonomies(){
-        global $wpdb;
-        $p = $wpdb->get_blog_prefix();
-        $query = $wpdb->prepare( "SELECT DISTINCT tt.taxonomy as value, tt.taxonomy as label FROM {$p}term_taxonomy tt
-                                    LEFT JOIN {$p}term_relationships tr ON tr.term_taxonomy_id = tt.term_taxonomy_id 
-                                    LEFT JOIN {$p}posts p ON p.ID = tr.object_id 
-                                    WHERE p.post_type in ('post', 'page', 'product')
-                                    AND tt.taxonomy not in ('language', 'term_language', 'term_translations', 'post_translations', 'product_type')
-                                    ORDER BY tt.taxonomy");
-        $result = $wpdb->get_results($query);
-
+        //if we are on the settings page
+        if ($_GET['page'] === 'pat-settings'){
+            global $wpdb;
+            $p = $wpdb->get_blog_prefix();
+            $query = $wpdb->prepare( "SELECT DISTINCT tt.taxonomy as value, tt.taxonomy as label FROM {$p}term_taxonomy tt
+                                        LEFT JOIN {$p}term_relationships tr ON tr.term_taxonomy_id = tt.term_taxonomy_id 
+                                        LEFT JOIN {$p}posts p ON p.ID = tr.object_id 
+                                        WHERE p.post_type in ('post', 'page', 'product')
+                                        AND tt.taxonomy not in ('language', 'term_language', 'term_translations', 'post_translations', 'product_type')
+                                        ORDER BY tt.taxonomy");
+            $result = $wpdb->get_results($query);
+        } else {
+            $resutl = array();
+        }
+        
         return $result;
     }
     
@@ -333,7 +338,7 @@ class PAT_translate_class{
     }
 
     public function pat_handle_bulk_action( $location, $action, $items ) {
-        if ($action ==  'pat_link_translations'){
+        if ($action ==  'pat_link_translations' || $action == 'pat_mass_translate'){
 
             global $pagenow;
             $page = '';
@@ -342,7 +347,7 @@ class PAT_translate_class{
             } elseif($pagenow == 'edit-tags.php'){
                 $page = "tag";
             } else {
-                $error_msg = 'This item type cannot be linked.';
+                $error_msg = 'This item type cannot be processed.';
                 $location = add_query_arg( array(
                     'pat_translation_error' => 1,
                     'pat_translation_msg' => urlencode($error_msg)
@@ -358,13 +363,8 @@ class PAT_translate_class{
                 ), $location);
                 return $location;
                 
-            } else {
-                //if the action is to break translation links
-                //for each item - break the links
-
+            } elseif ($action ==  'pat_link_translations') {
                 //the simplest approach is to first break all translation links of each item
-
-                
                 $item_langs = array();              //this is for checking if there is more than one item with the same language
                 $new_translation_links = array();   //this is for keeping new translation links
 
@@ -391,6 +391,8 @@ class PAT_translate_class{
                 }
 
                 ($page == 'post')? pll_save_post_translations($new_translation_links) : pll_save_term_translations($new_translation_links); //save new post translations
+                
+            } elseif ($action ==  'pat_mass_translate'){
                 
             }
             
@@ -744,6 +746,7 @@ class PAT_translate_class{
         $translated_term_id = pll_get_term($term->term_id, $target_lang);
         
         if (!$translated_term_id) {
+
             //create the term in the target language. First check if it is to be translated.
             //either all terms from a given taxonomy are translated or none of them - the check is on the whole taxonomy level,  not on the level of individual term
             if($taxonomy_flag == "translate"){
@@ -751,7 +754,8 @@ class PAT_translate_class{
             } else {
                 $term_name_translation = $term->name;
             }
-            
+            $translated_term_slug = sanitize_title($term_name_translation).'-'.$target_lang;
+
             //regardless if the term name should be translated, the term is another language version, so we have still to create it
 
             //see if the orignal term had a parent - this is the recursive part - walking up the taxonomy tree
@@ -763,22 +767,46 @@ class PAT_translate_class{
             
             $translated_term = wp_insert_term($term_name_translation, $term->taxonomy,
                                             array('parent'=> $translated_term_parent_id, 
-                                                    'slug' => sanitize_title($term_name_translation).'-'.$target_lang));
+                                                    'slug' => $translated_term_slug));
             
+            //it can happen that the same terms exist, but they are not linked in polylang. Translating them results in an error.
+            //here we handle that error.
+            if (get_class($translated_term) === 'WP_Error'){
+                //if term in fact exists
+                if ($translated_term->get_error_code() ===  'term_exists'){
+                    //we use this existing term as out translated term
+                    $translated_term_id = $translated_term->get_error_data();
+                    $translated_term = array('term_id' => $translated_term_id, 'term_taxonomy_id' => $term->term_taxonomy_id);
+                } else {
+                    //otherwise we have to throw the error
+                    $error_message = '';
+                    foreach ($translated_term->get_error_messages() as $message){
+                        $error_message .= $message . ' ';
+                    }
+                    throw new Exception('A problem occured while translating terms. Error message is: ' . $error_message);
+                }
+            } else {
+                $translated_term_id = $translated_term['term_id'];
+            }
+            
+            //terms can have meta data
             $translated_term_meta = $this->pat_translate_metas($source_lang, $target_lang, get_term_meta($term->term_id));
-
             foreach($translated_term_meta as $meta_key => $meta_value ){
                 add_term_meta($translated_term['term_id'], $meta_key, $meta_value);
             }
 
-            pll_set_term_language($translated_term['term_id'], $target_lang);
+            //if terms are different
+            if ($translated_term_id != $term->term_id){
+                //we set the new term language
+                pll_set_term_language($translated_term['term_id'], $target_lang);
+                $term_translations = pll_get_term_translations($term->term_id);       //get existing post translations
+                $term_translations[$target_lang] = $translated_term['term_id'];         //set post id for the translated language
 
-            $term_translations = pll_get_term_translations($term->term_id);       //get existing post translations
-            $term_translations[$target_lang] = $translated_term['term_id'];         //set post id for the translated language
-            pll_save_term_translations($term_translations);
-
-            $translated_term_id = $translated_term['term_id'];
-
+                //and save term language relationships
+                pll_save_term_translations($term_translations);
+            
+            }
+            
             //enable further translations and changes if necessary
             do_action( 'pat_translated_term_action', $term->term_id, $translated_term['term_id'], $source_lang, $target_lang, $this->pat_strings_to_exclude);
 
