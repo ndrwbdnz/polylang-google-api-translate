@@ -29,7 +29,8 @@ class PAT_translate_class{
 
     private $pat_api_key, $pat_strings_to_exclude,
             $pat_meta_to_exclude, $pat_meta_to_translate,
-            $pat_taxonomies_to_exclude, $pat_taxonomies_to_translate;
+            $pat_taxonomies_to_exclude, $pat_taxonomies_to_translate,
+            $pat_batch_size;
 
     private $settings_panel;
 
@@ -62,8 +63,10 @@ class PAT_translate_class{
         add_action('current_screen', array( $this, 'pat_set_bulk_actions_hooks' ), 10, 1);
         add_action('admin_post_pat_auto_translate', array( $this, 'pat_auto_translate_handler' ));
         add_action('admin_notices', array( $this, 'pat_auto_translate_notice'));
+        add_action('admin_footer', array( $this, 'pat_footer'));
 
-        //ajax handler for strings translations
+        //ajax handlers
+        add_action( 'wp_ajax_pat_auto_translate', array($this, 'pat_auto_translate_ajax_handler') );
         add_action( 'wp_ajax_pat_string_translate', array($this, 'pat_string_translate') );
         
     }
@@ -155,6 +158,13 @@ class PAT_translate_class{
                     'multiple' => true,
                     'options' => $this->pat_get_taxonomies(),
                 ),
+                array(
+                    'id'   => 'pat_batch_size',
+                    'name' => __( 'Batch size for mass-translating posts' ),
+                    'desc' => __( 'Default 10. This is how many posts will be translated in one batch if you select posts and choose Auto-translate mass action. Keep in mind that if you have 5 languages per post, and set batch size to 10, it will be 50 translations per batch. Tweak this number depending on the number of languages and post size. If server timeouts occur during mass translations, lower the batch size.' ),
+                    'type' => 'text'
+                ),
+
             ),
             // 'docs' => array(
 
@@ -175,6 +185,7 @@ class PAT_translate_class{
         $this->pat_taxonomies_to_exclude = array_key_exists('pat_taxonomies_to_exclude', $option_table)? $option_table['pat_taxonomies_to_exclude'] : array();
         $this->pat_taxonomies_to_translate = array_key_exists('pat_taxonomies_to_translate', $option_table)? $option_table['pat_taxonomies_to_translate'] : array();
         $this->pat_api_key = array_key_exists('pat_api_key', $option_table)? $option_table['pat_api_key'] : '';
+        $this->pat_batch_size = array_key_exists('pat_batch_size', $option_table)? $option_table['pat_batch_size'] : 10;
 
     }
 
@@ -217,6 +228,18 @@ class PAT_translate_class{
         return $result;
     }
     
+    function pat_footer(){
+        echo '<div id="pat_thickbox" style="display:none;">
+                <p>Processing Ajax. Please dont close this site untill the process is finished.</p>
+                <div id="pat_tb_messages">
+                </div>
+                <div class="pat_tb_bottom">
+                    <span class="pat_spinner spinner"></span>
+                    <button id="TB_closeWindowButton" class="button-primary" disabled>Close</button>
+                </div>
+            </div>';
+    }
+
  // Scripts  ---------------------------------------------------------------------------------------------------------------
 
     function pat_admin_enqueue_scripts(){
@@ -225,13 +248,15 @@ class PAT_translate_class{
             if ( in_array(get_current_screen()->post_type, array('post', 'page', 'product')) || 
                 (array_key_exists( 'page', $_GET ) && 'mlang_strings' === $_GET['page'] )
             ){
+                add_thickbox();
                 wp_enqueue_script( 'pat-js', plugin_dir_url( __FILE__ ) . 'assets/pat.js', array('jquery'), null, true );
                 wp_localize_script(
                     'pat-js',
                     'pat_js_obj',
                     array(
                         'ajaxurl' => admin_url( 'admin-ajax.php' ),
-                        'nonce' => wp_create_nonce('pat-ajax-nonce')
+                        'nonce' => wp_create_nonce('pat-ajax-nonce'),
+                        'pat_batch_size' => $this->pat_batch_size
                     )
                 );
             }
@@ -249,91 +274,189 @@ class PAT_translate_class{
     }
 
  // Admin actions ---------------------------------------------------------------------------------------------------------------
-    
     public function pat_auto_translate_handler() {
 
         //get parameters from the request URL
-        // if (!check_admin_referer( 'new-post-translation' )){
-        //     $error_msg = 'The link has expired. Please try again.';
-        //     $translated_post_id = FALSE;
-        // } else
-        
-        if( (!isset($_REQUEST['from_post']) || !isset($_REQUEST['from_tag']) ) && !isset($_REQUEST['new_lang'])){
-            $error_msg = 'Cannot translate: post or language not provided';
-            $translated_post_id = FALSE;
+        $message = '';
+        $location = ''; 
+
+        if (!check_admin_referer( 'new-post-translation' )){
+            $message = 'The link has expired. Please try again.';
             $post_type = isset($_REQUEST['post_type']) ? $_REQUEST['post_type'] : '';
+            $ref_path = isset($_REQUEST['ref_path']) ? $_REQUEST['ref_path'] : 'edit.php';
             $location = add_query_arg( array(
                 'post_type' => $post_type,
                 'pat_translation_error' => 1,
-                'pat_translation_msg' => urlencode($error_msg),
+                'pat_translation_msg' => urlencode($message),
                 'post_status' => 'all'
-            ), 'edit.php' );
-
+            ), $ref_path );        //strtok($_SERVER["REQUEST_URI"], '?');
         } else {
-            $from_post = isset($_REQUEST['from_post']) ? $_REQUEST['from_post'] : 0;
-            $post_type = isset($_REQUEST['post_type']) ? $_REQUEST['post_type'] : '';
-            $target_lang = $_REQUEST['new_lang'];
-            $edit_post = isset($_REQUEST['edit_post']) ? $_REQUEST['edit_post'] : 0;            //when post is edited
-            $taxonomy = isset($_REQUEST['taxonomy']) ? $_REQUEST['taxonomy'] : '';              
-            $from_tag = isset($_REQUEST['from_tag']) ? $_REQUEST['from_tag'] : 0;
-            $error_msg = '';
 
-            //depending on the above paramters do different translations
-            try{
-                //if this is post, page or product
-                if ($from_post != 0 && in_array($post_type, array('post', 'page', 'product'))) {
-                    
-                    $source_lang = pll_get_post_language($from_post);
-                    if (in_array($post_type, array('post', 'page'))){
-                        $translated_post_id = $this->pat_translate_post($from_post, $source_lang, $target_lang);
-                    } elseif ($post_type == 'product') {
-                        $translated_post_id = $this->pat_translate_product($from_post, $source_lang, $target_lang);
-                    }
-
-                    //join the translated post with the original post
-                    pll_set_post_language($translated_post_id, $target_lang);
-                    $post_translations = pll_get_post_translations($from_post);       //get existing post translations
-                    $post_translations[$target_lang] = $translated_post_id;         //set post id for the translated language
-                    pll_save_post_translations($post_translations);                 //save new post translations
-
-                    if($edit_post == 1){                                                          //when post is edited
-                        $location = add_query_arg( array(
-                            'post' => $translated_post_id,
-                            'action' => 'edit',
-                            'pat_translation_msg' => urlencode("Translataion succesfull. Please review and publish the post.")
-                        ), 'post.php' );
-                    } else {
-                        $location = add_query_arg( array(
-                            'post_type' => $post_type,
-                            'pat_translation_msg' => urlencode("Translataion succesfull. Please review and publish the post."),
-                            'post_status' => 'all'
-                        ), 'edit.php' );    
-                    }
-
-                } elseif ($taxonomy != '' && $from_tag != 0) {
-                    $source_lang = pll_get_term_language($from_tag);
-                    $this->pat_translate_taxonomy($source_lang, $target_lang, $from_tag, $taxonomy);
-
-                    $location = add_query_arg( array(
-                        'taxonomy' => $taxonomy,
-                        'post_type' => $post_type,
-                        'pat_translation_msg' => urlencode("Translataion succesfull. Please review translations.")
-                    ), 'edit-tags.php' );   
-                }
-
-            } catch (Exception $e) {
-                $error_msg = 'Translation error: '.$e->getMessage();
+            //request is either from http request or from ajax call
+            if( (!isset($_REQUEST['from_post']) || !isset($_REQUEST['from_tag']) ) && !isset($_REQUEST['new_lang'])){
+                $message = 'Cannot translate: post or language not provided';
+                $translated_post_id = FALSE;
+                $post_type = isset($_REQUEST['post_type']) ? $_REQUEST['post_type'] : '';
                 $location = add_query_arg( array(
                     'post_type' => $post_type,
                     'pat_translation_error' => 1,
-                    'pat_translation_msg' => urlencode($error_msg),
+                    'pat_translation_msg' => urlencode($message),
                     'post_status' => 'all'
                 ), 'edit.php' );
+
+            } else {
+                $from_post = isset($_REQUEST['from_post']) ? $_REQUEST['from_post'] : 0;
+                $post_type = isset($_REQUEST['post_type']) ? $_REQUEST['post_type'] : '';
+                $target_lang = $_REQUEST['new_lang'];
+                $edit_post = isset($_REQUEST['edit_post']) ? $_REQUEST['edit_post'] : 0;            //when post is edited
+                $taxonomy = isset($_REQUEST['taxonomy']) ? $_REQUEST['taxonomy'] : '';              
+                $from_tag = isset($_REQUEST['from_tag']) ? $_REQUEST['from_tag'] : 0;
+
+                //depending on the above paramters do different translations
+                
+                $message = '';
+                $location = '';
+                if ($from_post != 0 && in_array($post_type, array('post', 'page'))){
+                    $translated_post_id = $this->pat_translate_post($from_post, $target_lang, $edit_post, $post_type, $message, $location);
+                } elseif ($from_post != 0 && $post_type == 'product') {
+                    $translated_post_id = $this->pat_translate_product($from_post, $target_lang, $edit_post, $post_type, $message, $location);
+                } elseif ($taxonomy != '' && $from_tag != 0) {
+                    $translated_term = $this->pat_translate_taxonomy($target_lang, $from_tag, $taxonomy, $post_type, $message, $location);
+                }
+
             }
+
         }
 
         wp_redirect( admin_url( $location ) );
         exit();
+
+    }
+
+    public function pat_auto_translate_ajax_handler() {
+
+        $response = new WP_Ajax_Response();
+
+        if( wp_doing_ajax() ){
+            $nonce = $_POST['nonce'];
+            if ( ! wp_verify_nonce( $nonce, 'pat-ajax-nonce' ) ) {
+                die( 'Nonce value cannot be verified.' );
+            }
+        }
+
+        $message = '';
+        $location ='';
+
+        //process the parameter array
+        $parametrs = $_POST["parameter_array"];
+        $parametrs = json_decode(stripslashes($parametrs), true);
+        $post_type = isset($_POST['post_type']) ? $_POST['post_type'] : '';
+        $taxonomy = isset($_POST['taxonomy']) ? $_POST['taxonomy'] : '';
+        $unique_ids = array();      //these ids will be collected in the first loop and then used in the second loop to fetch single rows for displaying the results
+        //main lopp that processes each batch (as well as a single translation)
+        //each parameters array entry is one translation
+        //first loop is to make translations, get result messages and collect all post ids
+        foreach ($parametrs as $t){             //$t as one single translation. Short name to shorten referring to parameters for each translation
+            
+            $message = '';      //reset message for the next translation
+
+            if (in_array($post_type, array('post', 'page', 'product')) && $t['from_post'] != 0 && $taxonomy == ''){
+
+                if ($post_type == 'post' || $post_type == 'page'){
+                    $translated_post_id = $this->pat_translate_post($t['from_post'], $t['new_lang'], '', $post_type, $message, $location);     //location is not used in ajax
+                } elseif ($post_type == 'product'){
+                    $translated_post_id = $this->pat_translate_product($t['from_post'], $t['new_lang'], '', $post_type, $message, $location);
+                }
+                $row_id = $t['from_post'];       //this is to be able to assign message to proper row in the results table
+                if ($translated_post_id) {         //translation was successful
+                    $post_translations = pll_get_post_translations($t['from_post']);
+                    //we treat post id as array key and hence it will be unique, the value is the original post id - we use it later for inserting values in proper places in the table
+                    $post_translations = array_fill_keys(array_values($post_translations), $row_id);
+                    $unique_ids = $unique_ids + $post_translations;
+                }
+
+            } elseif ($taxonomy != '' && $t['from_tag'] != 0){
+                $translated_term = $this->pat_translate_taxonomy($t['new_lang'], $t['from_tag'], $taxonomy, $post_type, $message, $location);
+                $row_id = $t['from_tag'];
+                if ($translated_term){       //translation was successful
+                    //it is assumed that there will be no case where tags are mixed with posts on the same translation run
+                    $term_translations = pll_get_term_translations($t['from_tag']);
+                    //we treat term id as array key and hence it will be unique, the value is the original term - we use it later for inserting values in proper places in the table
+                    $term_translations = array_fill_keys(array_values($term_translations), $row_id);
+                    $unique_ids = $unique_ids + $term_translations;
+                }
+            }
+            
+            $response->add( array( 'what' => 'message', 'data' => $message ));
+        }
+        
+        //once we have translations ready, it's time to get updated rows
+        if ( in_array($post_type, array('post', 'page', 'product')) && $taxonomy == ''){
+            //get proper list table depending on post type
+                $screen = WP_Screen::get( 'edit' );
+                if ($post_type == 'post'){
+                } elseif ($post_type == 'page'){
+                    $screen->post_type = 'page';
+                } elseif ($post_type == 'product'){
+                    //product
+                    $screen->post_type = 'product';
+                    //this is all just to get filters from wc_admin_list_table_products and abstract_wc_admin_list_table hooked up to correct WP_list_table functions so that proper columns can be displayed
+                    include_once WP_PLUGIN_DIR . '/woocommerce/includes/admin/class-wc-admin-meta-boxes.php';
+                    include_once WP_PLUGIN_DIR . '/woocommerce/includes/admin/list-tables/class-wc-admin-list-table-products.php';
+                    $wc_list_table = new WC_Admin_List_Table_Products();
+                }
+                $list_table = _get_list_table( 'WP_Posts_List_Table', array( 'screen' => $screen ) );
+            
+            //get single row for each post and attach it to ajax response
+            foreach ($unique_ids as $post_id => $from_post){
+                $level = is_post_type_hierarchical( $post_type ) ? count( get_ancestors( $post_id, $post_type ) ) : 0;
+                if ( $post = get_post( $post_id ) ) {
+                    ob_start();
+                    $list_table->single_row( $post, $level );
+                    $data = ob_get_clean();
+                    $row_id = "#post-" . $post_id;
+                    $ref_row_id = "#post-" . $from_post;
+                    $response->add( array( 'what' => 'row', 'data' => $data,
+                            'supplemental' => array( 'row_id' => $row_id, 'ref_row_id' => $ref_row_id) ));
+                }
+            }
+
+        } elseif ($taxonomy != ''){
+            $GLOBALS['taxonomy'] = $taxonomy;       //don't know why global taxonomy may be different from taxonomy. This in turn messes up fetching of single row language columns
+            $screen = WP_Screen::get('edit-tags');
+            $screen->post_type = 'product';
+            $screen->taxonomy = 'product_cat';
+            $list_table = _get_list_table( 'WP_Terms_List_Table', array( 'screen' => $screen ) );
+
+            foreach ($unique_ids as $term_id => $from_term){
+                $level = is_taxonomy_hierarchical( $taxonomy ) ? count( get_ancestors( $term_id, $taxonomy, 'taxonomy' ) ) : 0;
+                if ( $term = get_term( $term_id, $taxonomy ) ) {
+                    ob_start();
+                    $list_table->single_row( $term, $level );
+                    $data = ob_get_clean();
+                    $row_id = "#tag-" . $term_id;
+                    $ref_row_id = "#tag-" . $from_term;
+                    $response->add( array( 'what' => 'row', 'data' => $data,
+                        'supplemental' => array( 'row_id' => $row_id, 'ref_row_id' => $ref_row_id )) );
+                }
+            }
+
+        }
+
+        $response->send();
+    }
+    
+    public function pat_auto_translate_notice() {
+
+        global $pagenow; //, $typenow;
+        //in_array($typenow, array('post', 'page', 'product'))
+        if( in_array($pagenow, array('edit.php', 'edit-tags.php')) && isset( $_REQUEST['pat_translation_msg'] )){
+            if (isset( $_REQUEST['pat_translation_error'] )){
+                echo "<div class=\"notice notice-error is-dismissible\"><p>{$_REQUEST['pat_translation_msg']}</p></div>";
+            } else {
+                echo "<div class=\"notice notice-success is-dismissible\"><p>{$_REQUEST['pat_translation_msg']}</p></div>";
+            }
+        }
 
     }
 
@@ -356,7 +479,15 @@ class PAT_translate_class{
                 return $location;
             }
 
-            if( empty($items) ){
+            if ($action == 'pat_mass_translate'){
+                $error_msg = 'Bulk translation can only be done via Ajax. Please check that your browser does not block javascript and that there are no errors in the javascript console.';
+                $location = add_query_arg( array(
+                    'pat_translation_error' => 1,
+                    'pat_translation_msg' => urlencode($error_msg)
+                ), $location);
+                return $location;
+
+            } elseif( empty($items) ){
                 $error_msg = 'Please select items first';
                 $location = add_query_arg( array(
                     'pat_translation_error' => 1,
@@ -393,28 +524,12 @@ class PAT_translate_class{
 
                 ($page == 'post')? pll_save_post_translations($new_translation_links) : pll_save_term_translations($new_translation_links); //save new post translations
                 
-            } elseif ($action == 'pat_mass_translate'){
-                
             }
             
         }
 
         return $location;
 	}
-
-    public function pat_auto_translate_notice() {
-
-        global $pagenow; //, $typenow;
-        //in_array($typenow, array('post', 'page', 'product'))
-        if( in_array($pagenow, array('edit.php', 'edit-tags.php')) && isset( $_REQUEST['pat_translation_msg'] )){
-            if (isset( $_REQUEST['pat_translation_error'] )){
-                echo "<div class=\"notice notice-error is-dismissible\"><p>{$_REQUEST['pat_translation_msg']}</p></div>";
-            } else {
-                echo "<div class=\"notice notice-success is-dismissible\"><p>{$_REQUEST['pat_translation_msg']}</p></div>";
-            }
-        }
-
-    }
 
     public function pat_string_translate (){
         $nonce = $_POST['nonce'];
@@ -427,7 +542,7 @@ class PAT_translate_class{
 
         // The $_REQUEST contains all the data sent via ajax
         if ( isset($_REQUEST) ) {
-            $source_lang = ''; //pll_default_language();        //empty source lang firces google to detect language
+            $source_lang = ''; //pll_default_language();        //empty source lang forces google to detect language
             $target_lang = $_REQUEST['to_lang'];
             $text_to_translate = $_REQUEST['string_to_translate'];
 
@@ -441,211 +556,296 @@ class PAT_translate_class{
 
  // Main translation functions - post (and page) and product ---------------------------------------------------------------------------------------------------------------   
     
-    private function pat_translate_post($post_id, $source_lang, $target_lang){
+    private function pat_translate_post($post_id, $target_lang, $edit_post, $post_type, &$message, &$location){
 
-        $post_to_translate = get_post($post_id);
-        
-        $translated_content = $this->pat_translate_text($source_lang, $target_lang, $post_to_translate->post_content, $this->pat_strings_to_exclude);
-        $translated_excerpt = $this->pat_translate_text($source_lang, $target_lang, $post_to_translate->post_excerpt, $this->pat_strings_to_exclude);
-        $translated_title = $this->pat_translate_text($source_lang, $target_lang, $post_to_translate->post_title, $this->pat_strings_to_exclude);
-        $translated_metas = $this->pat_translate_metas($source_lang, $target_lang, get_post_meta($post_id));
-        $translated_taxonomies = $this->pat_translate_post_taxonomies($source_lang, $target_lang, get_post_taxonomies($post_id), $post_id);
-        $translated_categories = array_key_exists('category', $translated_taxonomies) ? $translated_taxonomies['category'] : array();
-        $translated_tags = array_key_exists('post_tag', $translated_taxonomies) ? $translated_taxonomies['post_tag'] : array();
+        try{
+            $source_lang = pll_get_post_language($post_id);
 
-        //after all translations have been done - instert the post
-        $translated_post_id = wp_insert_post(array(
-            'post_author' => $post_to_translate->post_author,
-            'post_date' => $post_to_translate->post_date,
-            'post_date_gmt' => $post_to_translate->post_date_gmt,
-            'post_content' => $translated_content,
-            'post_title' => html_entity_decode($translated_title, ENT_QUOTES),
-            'post_excerpt' => html_entity_decode($translated_excerpt, ENT_QUOTES),
-            'post_status' => 'draft',
-            'post_type' => $post_to_translate->post_type,
-            'comment_status' => $post_to_translate->comment_status,
-            'ping_status' => $post_to_translate->ping_status,
-            'post_password' => $post_to_translate->post_password,
-            'post_modified' => $post_to_translate->post_modified,
-            'post_modified_gmt' => $post_to_translate->post_modified_gmt,
-            'post_parent' => $post_to_translate->post_parent,
-            'menu_order' => $post_to_translate->menu_order,
-            'post_category' => $translated_categories,
-            'tags_input' => $translated_tags,
-            'tax_input' => $translated_taxonomies,
-            'meta_input' => $translated_metas
-        ));
+            $post_to_translate = get_post($post_id);
+            $post_title = get_the_title($post_to_translate);
+            $message .= "Translation from $source_lang $post_title (id: $post_id) to $target_lang ";
+            
+            $translated_content = $this->pat_translate_text($source_lang, $target_lang, $post_to_translate->post_content, $this->pat_strings_to_exclude);
+            $translated_excerpt = $this->pat_translate_text($source_lang, $target_lang, $post_to_translate->post_excerpt, $this->pat_strings_to_exclude);
+            $translated_title = $this->pat_translate_text($source_lang, $target_lang, $post_to_translate->post_title, $this->pat_strings_to_exclude);
+            $translated_metas = $this->pat_translate_metas($source_lang, $target_lang, get_post_meta($post_id));
+            $translated_taxonomies = $this->pat_translate_post_taxonomies($source_lang, $target_lang, get_post_taxonomies($post_id), $post_id);
+            $translated_categories = array_key_exists('category', $translated_taxonomies) ? $translated_taxonomies['category'] : array();
+            $translated_tags = array_key_exists('post_tag', $translated_taxonomies) ? $translated_taxonomies['post_tag'] : array();
 
-        return $translated_post_id;
+            //after all translations have been done - instert the post
+            $translated_post_id = wp_insert_post(array(
+                'post_author' => $post_to_translate->post_author,
+                'post_date' => $post_to_translate->post_date,
+                'post_date_gmt' => $post_to_translate->post_date_gmt,
+                'post_content' => $translated_content,
+                'post_title' => html_entity_decode($translated_title, ENT_QUOTES),
+                'post_excerpt' => html_entity_decode($translated_excerpt, ENT_QUOTES),
+                'post_status' => 'draft',
+                'post_type' => $post_to_translate->post_type,
+                'comment_status' => $post_to_translate->comment_status,
+                'ping_status' => $post_to_translate->ping_status,
+                'post_password' => $post_to_translate->post_password,
+                'post_modified' => $post_to_translate->post_modified,
+                'post_modified_gmt' => $post_to_translate->post_modified_gmt,
+                'post_parent' => $post_to_translate->post_parent,
+                'menu_order' => $post_to_translate->menu_order,
+                'post_category' => $translated_categories,
+                'tags_input' => $translated_tags,
+                'tax_input' => $translated_taxonomies,
+                'meta_input' => $translated_metas
+            ));
+
+            //join the translated post with the original post
+            pll_set_post_language($translated_post_id, $target_lang);
+            $post_translations = pll_get_post_translations($post_id);       //get existing post translations
+            $post_translations[$target_lang] = $translated_post_id;         //set post id for the translated language
+            pll_save_post_translations($post_translations);                 //save new post translations
+
+            $translated_post_title = get_the_title($translated_post_id);
+            $message .= "$translated_post_title (id: $translated_post_id). Success.";
+
+            if($edit_post == 1){                                                          //when post is edited
+            
+                $location = add_query_arg( array(
+                    'post' => $translated_post_id,
+                    'action' => 'edit',
+                    'pat_translation_msg' => urlencode($message)
+                ), 'post.php' );
+
+            } else {
+
+                $location = add_query_arg( array(
+                    'post_type' => $post_type,
+                    'pat_translation_msg' => urlencode($message),
+                    'post_status' => 'all'
+                ), 'edit.php' );
+            }
+
+            return $translated_post_id;
+
+        } catch (Exception $e) {
+            $message .= "Error was thrown: ".$e->getMessage();
+            $location = add_query_arg( array(
+                'post_type' => $post_type,
+                'pat_translation_error' => 1,
+                'pat_translation_msg' => urlencode($message),
+                'post_status' => 'all'
+            ), 'edit.php' );
+            return FALSE;
+        }
     }
     
     //copy of the woocommerce function product_duplicate - with modifications
     //cannot use woocommerce duplicate_product function because polylang hooks into it and copies all product translations
     //this duplication is different - it is supposed to only copy the specific product (not all its translation products) and create a trasnlation product from it
-    private function pat_translate_product($post_id, $source_lang, $target_lang){
+    private function pat_translate_product($post_id, $target_lang, $edit_post, $post_type, &$message, &$location){
         
-        $product = wc_get_product( $post_id );
+        try{
+            $source_lang = pll_get_post_language($post_id);
+            $product = wc_get_product( $post_id );
+            $post_title = get_the_title($product);
+            $message .= "Translation from $source_lang $post_title (id: $post_id) to $target_lang ";
 
-		$meta_to_exclude = array_filter(
-			apply_filters(
-				'woocommerce_duplicate_product_exclude_meta',
-				$this->pat_meta_to_exclude,
-				array_map(
-					function ( $datum ) {
-						return $datum->key;
-					},
-					$product->get_meta_data()
-				)
-			)
-		);
-        
-        //for the post we could first translate everything and then create a new post
-        //for the product - we first clone the product object to incluide all it's details, and then we translate 
-		$duplicate = clone $product;
-		$duplicate->set_id( 0 );
-        $duplicate->set_name($this->pat_translate_text($source_lang, $target_lang, $product->get_name()));
-        $duplicate->set_description($this->pat_translate_text($source_lang, $target_lang, $product->get_description()));
-        $duplicate->set_short_description($this->pat_translate_text($source_lang, $target_lang, $product->get_short_description()));
-        $duplicate->set_purchase_note($this->pat_translate_text($source_lang, $target_lang, $product->get_purchase_note()));
-		$duplicate->set_status( 'draft' );
-		$duplicate->set_slug( '' );
+            $meta_to_exclude = array_filter(
+                apply_filters(
+                    'woocommerce_duplicate_product_exclude_meta',
+                    $this->pat_meta_to_exclude,
+                    array_map(
+                        function ( $datum ) {
+                            return $datum->key;
+                        },
+                        $product->get_meta_data()
+                    )
+                )
+            );
+            
+            //for the post we could first translate everything and then create a new post
+            //for the product - we first clone the product object to incluide all it's details, and then we translate 
+            $duplicate = clone $product;
+            $duplicate->set_id( 0 );
+            $duplicate->set_name($this->pat_translate_text($source_lang, $target_lang, $product->get_name()));
+            $duplicate->set_description($this->pat_translate_text($source_lang, $target_lang, $product->get_description()));
+            $duplicate->set_short_description($this->pat_translate_text($source_lang, $target_lang, $product->get_short_description()));
+            $duplicate->set_purchase_note($this->pat_translate_text($source_lang, $target_lang, $product->get_purchase_note()));
+            $duplicate->set_status( 'draft' );
+            $duplicate->set_slug( '' );
 
-        add_filter( 'wc_product_has_unique_sku', array($this, 'pat_disable_unique_sku'), PHP_INT_MAX );     //temporarily disable unique sku
-        $duplicate->set_sku($product->get_sku( 'edit' ));
+            add_filter( 'wc_product_has_unique_sku', array($this, 'pat_disable_unique_sku'), PHP_INT_MAX );     //temporarily disable unique sku
+            $duplicate->set_sku($product->get_sku( 'edit' ));
 
-        //$duplicate->set_parent_id($product->get_parent_id());                 //in case of products there are no parent ids
-		//$duplicate->set_total_sales( 0 );                                     //we want to keep sales count for the product translation - it is the same product
-		//if ( '' !== $product->get_sku( 'edit' ) ) {
-		//	$duplicate->set_sku( wc_product_generate_unique_sku( 0, $product->get_sku( 'edit' ) ) );        //we want to keep the same sku as the original product
-		//}
-		//$duplicate->set_date_created( null );                                                             //we keep date, ratings, reviews etc of the original product
-        //$duplicate->set_rating_counts( 0 );
-		//$duplicate->set_average_rating( 0 );
-		//$duplicate->set_review_count( 0 );
-   
-        //meta data is copied when object is cloned, so we have to remove unwanted metas
-        foreach ( $meta_to_exclude as $meta_key ) {
-            $duplicate->delete_meta_data( $meta_key );
-        }
-        //once we removed unwanted metas, we now translate the remaining ones
-        //first we get all metas
-        $duplicate_metas = $duplicate->get_meta_data();
-        //we loop through them
-        foreach($duplicate_metas as $meta_object){
-            $meta_data = $meta_object->get_data();              //these metas are in a strange table with each entry being a wc_meta_data object that contains current_data and data tables. We can get the meta data using a function
-            $translated_meta = $this->pat_translate_metas($source_lang, $target_lang, array($meta_data['key'] => $meta_data['value']));     //then we extract from that result key and value to be able to send it to our translation function. We translate only one meta at a time, to avoid looping these values over and over
-            if (!empty($translated_meta) && $translated_meta[$meta_data['key']] != $meta_data['value']){
-                $duplicate->update_meta_data($meta_data['key'], $translated_meta[$meta_data['key']]);           //finally we update the meta data
+            //$duplicate->set_parent_id($product->get_parent_id());                 //in case of products there are no parent ids
+            //$duplicate->set_total_sales( 0 );                                     //we want to keep sales count for the product translation - it is the same product
+            //if ( '' !== $product->get_sku( 'edit' ) ) {
+            //	$duplicate->set_sku( wc_product_generate_unique_sku( 0, $product->get_sku( 'edit' ) ) );        //we want to keep the same sku as the original product
+            //}
+            //$duplicate->set_date_created( null );                                                             //we keep date, ratings, reviews etc of the original product
+            //$duplicate->set_rating_counts( 0 );
+            //$duplicate->set_average_rating( 0 );
+            //$duplicate->set_review_count( 0 );
+    
+            //meta data is copied when object is cloned, so we have to remove unwanted metas
+            foreach ( $meta_to_exclude as $meta_key ) {
+                $duplicate->delete_meta_data( $meta_key );
             }
-        }
-
-        $translated_taxonomies = $this->pat_translate_post_taxonomies($source_lang, $target_lang, get_post_taxonomies($post_id), $post_id);
-        $duplicate->set_tag_ids($translated_taxonomies['product_tag']);
-        $duplicate->set_category_ids($translated_taxonomies['product_cat']);
-
-        //attributes meta field (_product_attributes meta key in the wp_postmeta table)
-        //stores all the attributes for the product (size, weight, color etc) with their relevant paramters (for variations, visible in front end, etc)
-        //the different values of the attributes (e.g. possible color values) are stored as taxonomies
-        //each attribute has the options array inside with the stored ID of taxonomy term, that contains the value (e.g. color name)
-        //we have translated all taxonomies already above
-        //attributes structure stays the same as in the original product
-        //the only thing that changes are taxonomy tag IDs
-        $attributes = (array) $product->get_attributes();
-        $translated_attributes = array();
-
-        foreach( $attributes as $key => $attribute ){
-            //we are looping only on attributes, not taxonomies
-            //we are not interested here in taxonomies that are not used for attributes
-            //i.e. we will not create new attribtes from them, as might have been the case in another scenario
-            //https://stackoverflow.com/questions/53944532/auto-set-specific-attribute-term-value-to-purchased-products-on-woocommerce
-
-            if( ! is_null( $translated_taxonomies[$attribute] )) {
-                $translated_attribute = $attribute;                                             //attribute is a term object (get_term($translated_term_id, $term->taxonomy))
-                $translated_attribute->set_options( $translated_taxonomies[$attribute] );       //here we assign translation
-                $translated_attributes[$key] = $translated_attribute;
-            } else {
-                //if the attribute has not been translated (neither copied, nor translarted - i.e. it must have been excluded)
-                //then exclude it from attributes - i.e. do not copy it to $translated_attributes array
+            //once we removed unwanted metas, we now translate the remaining ones
+            //first we get all metas
+            $duplicate_metas = $duplicate->get_meta_data();
+            //we loop through them
+            foreach($duplicate_metas as $meta_object){
+                $meta_data = $meta_object->get_data();              //these metas are in a strange table with each entry being a wc_meta_data object that contains current_data and data tables. We can get the meta data using a function
+                $translated_meta = $this->pat_translate_metas($source_lang, $target_lang, array($meta_data['key'] => $meta_data['value']));     //then we extract from that result key and value to be able to send it to our translation function. We translate only one meta at a time, to avoid looping these values over and over
+                if (!empty($translated_meta) && $translated_meta[$meta_data['key']] != $meta_data['value']){
+                    $duplicate->update_meta_data($meta_data['key'], $translated_meta[$meta_data['key']]);           //finally we update the meta data
+                }
             }
-        }
 
-        $duplicate->set_attributes( $translated_attributes );
+            $translated_taxonomies = $this->pat_translate_post_taxonomies($source_lang, $target_lang, get_post_taxonomies($post_id), $post_id);
+            $duplicate->set_tag_ids($translated_taxonomies['product_tag']);
+            $duplicate->set_category_ids($translated_taxonomies['product_cat']);
 
-        // Append the new term in the product
-        // if( ! has_term( $term_name, $taxonomy, $_product->get_id() ) ){
-        //        wp_set_object_terms($_product->get_id(), $term_slug, $taxonomy, true );
-        // }
+            //attributes meta field (_product_attributes meta key in the wp_postmeta table)
+            //stores all the attributes for the product (size, weight, color etc) with their relevant paramters (for variations, visible in front end, etc)
+            //the different values of the attributes (e.g. possible color values) are stored as taxonomies
+            //each attribute has the options array inside with the stored ID of taxonomy term, that contains the value (e.g. color name)
+            //we have translated all taxonomies already above
+            //attributes structure stays the same as in the original product
+            //the only thing that changes are taxonomy tag IDs
+            $attributes = (array) $product->get_attributes();
+            $translated_attributes = array();
 
-        //check if there are translated products for cross sell and up sell.
-        //If so - link them. If not - set these references empty
-        $cross_sell_ids = $product->get_cross_sell_ids();
-        $translated_cross_sell_id = array();
-        foreach ($cross_sell_ids as $cross_sell_id){
-            $translated_cross_sell_id = pll_get_post($cross_sell_id, $target_lang);
-            if (!is_null($translated_cross_sell_id)){
-                array_push($translated_cross_sell_ids, $translated_cross_sell_id);
+            foreach( $attributes as $key => $attribute ){
+                //we are looping only on attributes, not taxonomies
+                //we are not interested here in taxonomies that are not used for attributes
+                //i.e. we will not create new attribtes from them, as might have been the case in another scenario
+                //https://stackoverflow.com/questions/53944532/auto-set-specific-attribute-term-value-to-purchased-products-on-woocommerce
+
+                if( ! is_null( $translated_taxonomies[$attribute] )) {
+                    $translated_attribute = $attribute;                                             //attribute is a term object (get_term($translated_term_id, $term->taxonomy))
+                    $translated_attribute->set_options( $translated_taxonomies[$attribute] );       //here we assign translation
+                    $translated_attributes[$key] = $translated_attribute;
+                } else {
+                    //if the attribute has not been translated (neither copied, nor translarted - i.e. it must have been excluded)
+                    //then exclude it from attributes - i.e. do not copy it to $translated_attributes array
+                }
             }
-        }
-        $duplicate->set_cross_sell_ids($translated_cross_sell_ids);
 
-        $up_sell_ids = $product->get_upsell_ids();
-        $translated_up_sell_id = array();
-        foreach ($up_sell_ids as $up_sell_id){
-            $translated_up_sell_id = pll_get_post($up_sell_id, $target_lang);
-            if (!is_null($translated_up_sell_id)){
-                array_push($translated_up_sell_ids, $translated_up_sell_id);
+            $duplicate->set_attributes( $translated_attributes );
+
+            // Append the new term in the product
+            // if( ! has_term( $term_name, $taxonomy, $_product->get_id() ) ){
+            //        wp_set_object_terms($_product->get_id(), $term_slug, $taxonomy, true );
+            // }
+
+            //check if there are translated products for cross sell and up sell.
+            //If so - link them. If not - set these references empty
+            $cross_sell_ids = $product->get_cross_sell_ids();
+            $translated_cross_sell_id = array();
+            foreach ($cross_sell_ids as $cross_sell_id){
+                $translated_cross_sell_id = pll_get_post($cross_sell_id, $target_lang);
+                if (!is_null($translated_cross_sell_id)){
+                    array_push($translated_cross_sell_ids, $translated_cross_sell_id);
+                }
             }
-        }
-        $duplicate->set_upsell_ids($translated_up_sell_ids);
+            $duplicate->set_cross_sell_ids($translated_cross_sell_ids);
 
-		// Save parent product.
-		$duplicate->save();
+            $up_sell_ids = $product->get_upsell_ids();
+            $translated_up_sell_id = array();
+            foreach ($up_sell_ids as $up_sell_id){
+                $translated_up_sell_id = pll_get_post($up_sell_id, $target_lang);
+                if (!is_null($translated_up_sell_id)){
+                    array_push($translated_up_sell_ids, $translated_up_sell_id);
+                }
+            }
+            $duplicate->set_upsell_ids($translated_up_sell_ids);
 
-		// Duplicate children of a variable product.
-		if ( $product->is_type( 'variable' ) ) {
-			foreach ( $product->get_children() as $child_id ) {
-				$child           = wc_get_product( $child_id );
-				$child_duplicate = clone $child;
-				$child_duplicate->set_parent_id( $duplicate->get_id() );
-				$child_duplicate->set_id( 0 );
-				//$child_duplicate->set_date_created( null );
+            // Save parent product.
+            $duplicate->save();
 
-				// If we wait and let the insertion generate the slug, we will see extreme performance degradation
-				// in the case where a product is used as a template. Every time the template is duplicated, each
-				// variation will query every consecutive slug until it finds an empty one. To avoid this, we can
-				// optimize the generation ourselves, avoiding the issue altogether.
-				$this->pat_generate_unique_slug( $child_duplicate );
+            // Duplicate children of a variable product.
+            if ( $product->is_type( 'variable' ) ) {
+                foreach ( $product->get_children() as $child_id ) {
+                    $child           = wc_get_product( $child_id );
+                    $child_duplicate = clone $child;
+                    $child_duplicate->set_parent_id( $duplicate->get_id() );
+                    $child_duplicate->set_id( 0 );
+                    //$child_duplicate->set_date_created( null );
 
-				// if ( '' !== $child->get_sku( 'edit' ) ) {
-				// 	$child_duplicate->set_sku( wc_product_generate_unique_sku( 0, $child->get_sku( 'edit' ) ) );
-				// }
-                $child_duplicate->set_sku($child->get_sku( 'edit' ));
-                
-                //child metas are cloned during object cloning. We have to remove unwanted metas
-				foreach ( $meta_to_exclude as $meta_key ) {
-					$child_duplicate->delete_meta_data( $meta_key );
-				}
-                $child_duplicate_metas = $child_duplicate->get_meta_data();
-                //we loop through them
-                foreach($child_duplicate_metas as $meta_object){
-                    $meta_data = $meta_object->get_data();              //these metas are in a strange table with each entry being a wc_meta_data object that contains current_data and data tables. We can get the meta data using a function
-                    $translated_meta = $this->pat_translate_metas($source_lang, $target_lang, array($meta_data['key'] => $meta_data['value']));     //then we extract from that result key and value to be able to send it to our translation function. We translate only one meta at a time, to avoid looping these values over and over
-                    if (!empty($translated_meta) && $translated_meta[$meta_data['key']] != $meta_data['value']){
-                        $child_duplicate->update_meta_data($meta_data['key'], $translated_meta[$meta_data['key']]);           //finally we update the meta data
+                    // If we wait and let the insertion generate the slug, we will see extreme performance degradation
+                    // in the case where a product is used as a template. Every time the template is duplicated, each
+                    // variation will query every consecutive slug until it finds an empty one. To avoid this, we can
+                    // optimize the generation ourselves, avoiding the issue altogether.
+                    $this->pat_generate_unique_slug( $child_duplicate );
+
+                    // if ( '' !== $child->get_sku( 'edit' ) ) {
+                    // 	$child_duplicate->set_sku( wc_product_generate_unique_sku( 0, $child->get_sku( 'edit' ) ) );
+                    // }
+                    $child_duplicate->set_sku($child->get_sku( 'edit' ));
+                    
+                    //child metas are cloned during object cloning. We have to remove unwanted metas
+                    foreach ( $meta_to_exclude as $meta_key ) {
+                        $child_duplicate->delete_meta_data( $meta_key );
                     }
+                    $child_duplicate_metas = $child_duplicate->get_meta_data();
+                    //we loop through them
+                    foreach($child_duplicate_metas as $meta_object){
+                        $meta_data = $meta_object->get_data();              //these metas are in a strange table with each entry being a wc_meta_data object that contains current_data and data tables. We can get the meta data using a function
+                        $translated_meta = $this->pat_translate_metas($source_lang, $target_lang, array($meta_data['key'] => $meta_data['value']));     //then we extract from that result key and value to be able to send it to our translation function. We translate only one meta at a time, to avoid looping these values over and over
+                        if (!empty($translated_meta) && $translated_meta[$meta_data['key']] != $meta_data['value']){
+                            $child_duplicate->update_meta_data($meta_data['key'], $translated_meta[$meta_data['key']]);           //finally we update the meta data
+                        }
+                    }
+
+                    //do_action( 'woocommerce_product_duplicate_before_save', $child_duplicate, $child );
+                    $child_duplicate->save();
                 }
 
-				//do_action( 'woocommerce_product_duplicate_before_save', $child_duplicate, $child );
-				$child_duplicate->save();
-			}
+                // Get new object to reflect new children.
+                $duplicate = wc_get_product( $duplicate->get_id() );
+            }
 
-			// Get new object to reflect new children.
-			$duplicate = wc_get_product( $duplicate->get_id() );
-		}
+            remove_filter( 'wc_product_has_unique_sku', array($this, 'pat_disable_unique_sku'));                //stop disabling unique sku 
 
-        remove_filter( 'wc_product_has_unique_sku', array($this, 'pat_disable_unique_sku'));                //stop disabling unique sku 
+            $translated_post_id = $duplicate->get_id();
 
-		return $duplicate->get_id();
+            //join the translated post with the original post
+            pll_set_post_language($translated_post_id, $target_lang);
+            $post_translations = pll_get_post_translations($post_id);       //get existing post translations
+            $post_translations[$target_lang] = $translated_post_id;         //set post id for the translated language
+            pll_save_post_translations($post_translations);                 //save new post translations
+
+            $translated_post_title = get_the_title($translated_post_id);
+            $message .= "$translated_post_title (id: $translated_post_id). Success.";
+            
+            if($edit_post == 1){                                                          //when post is edited
+
+                $location = add_query_arg( array(
+                    'post' => $translated_post_id,
+                    'action' => 'edit',
+                    'pat_translation_pat_translate_taxonomymsg' => urlencode($message)
+                ), 'post.php' );
+
+            } else {
+
+                $location = add_query_arg( array(
+                    'post_type' => $post_type,
+                    'pat_translation_msg' => urlencode($message),
+                    'post_status' => 'all'
+                ), 'edit.php' );
+            }
+
+            return $translated_post_id;
+
+        } catch (Exception $e) {
+            $message .= "Error was thrown: ".$e->getMessage();
+            $location = add_query_arg( array(
+                'post_type' => $post_type,
+                'pat_translation_error' => 1,
+                'pat_translation_msg' => urlencode($message),
+                'post_status' => 'all'
+            ), 'edit.php' );
+            return FALSE;
+        }
         
     }
 
@@ -653,36 +853,54 @@ class PAT_translate_class{
         return false;
     }
 
-    private function pat_translate_taxonomy ($source_lang, $target_lang, $from_tag, $taxonomy){
-        $translated_tag = $this->pat_translate_terms($source_lang, $target_lang, $from_tag, $taxonomy, "translate");
+    private function pat_translate_taxonomy ($target_lang, $from_tag, $taxonomy, $post_type, &$message, &$location){
+        try{
+            $source_lang = pll_get_term_language($from_tag);
+            
+            $term = get_term($from_tag, $taxonomy);
+            $message = "Translation from $source_lang $term->name (taxonomy id: $taxonomy) to $target_lang ";
 
-        //besides just transtaling terms, we also want to automatically update any translated posts that should have the translated terms linked to them
+            $translated_term = $this->pat_translate_terms($source_lang, $target_lang, $from_tag, $taxonomy, "translate");
+            
+            if ($translated_term){
+                $term = get_term($translated_term, $taxonomy);
+                $message .= "$term->name. Success.";
+            } else {
+                $message .= ". Error has occured. ";
+            }
 
-        $posts = get_posts( array(  'post_type' => 'any',
-                                    'post_status' => array('publish', 'draft'),
-                                    'numberposts' => -1,
-                                    'tax_query' => array(array('taxonomy' => $taxonomy, 'terms' => $from_tag))
-                                )
-                            );
+            //besides just transtaling terms, we also want to automatically update any translated posts that should have the translated terms linked to them
+            $posts = get_posts( array(  'post_type' => 'any',
+                                        'post_status' => array('publish', 'draft'),
+                                        'numberposts' => -1,
+                                        'tax_query' => array(array('taxonomy' => $taxonomy, 'terms' => $from_tag))
+                                    )
+                                );
 
-        foreach ($posts as $post){                                          //take each post that has this tag
-            $post_translations = pll_get_post_translations($post->ID);          //see if there are linked translated posts
-            //for the translated post in the new language (if exixts)
-            wp_set_object_terms($post_translations[$target_lang], $translated_tag, $taxonomy, true);  //true means append (not replace) terms
+            foreach ($posts as $post){                                          //take each post that has this tag
+                $post_translations = pll_get_post_translations($post->ID);          //see if there are linked translated posts
+                //for the translated post in the new language (if exixts)
+                wp_set_object_terms($post_translations[$target_lang], $translated_term, $taxonomy, true);  //true means append (not replace) terms
+            }
+
+            $location = add_query_arg( array(
+                'taxonomy' => $taxonomy,
+                'post_type' => $post_type,
+                'pat_translation_msg' => urlencode($message)
+            ), 'edit-tags.php' );
+
+            return $translated_term;
+
+        } catch (Exception $e) {
+            $message .= "Error was thrown: ".$e->getMessage();
+            $location = add_query_arg( array(
+                'post_type' => $post_type,
+                'pat_translation_error' => 1,
+                'pat_translation_msg' => urlencode($message),
+                'post_status' => 'all'
+            ), 'edit-tags.php' );
+            return FALSE;
         }
-
-    }
-
-    private function pat_link_translations (){
-
-        // pll_set_post_language($translated_post_id, $target_lang);
-        // $post_translations = pll_get_post_translations($from_post);       //get existing post translations
-        // $post_translations[$target_lang] = $translated_post_id;         //set post id for the translated language
-        // pll_save_post_translations($post_translations);                 //save new post translations
-
-        // $term_translations = pll_get_term_translations($term->term_id);       //get existing post translations
-        // $term_translations[$target_lang] = $translated_term['term_id'];         //set post id for the translated language
-        // pll_save_term_translations($term_translations);
 
     }
 

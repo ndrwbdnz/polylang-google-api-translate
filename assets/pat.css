@@ -13,6 +13,43 @@
     margin: 0px;
 }
 
+/* ajax window */
+div#TB_ajaxContent {
+    display: flex;
+    flex-direction: column;
+}
+
+div#pat_tb_messages {
+    background-color: #fff;
+    border: 1px solid grey;
+    padding: 3px;
+    overflow: scroll;
+    flex-grow: 20;
+}
+
+div#pat_tb_messages div:nth-of-type(odd) {
+    background-color: lightgrey;
+}
+
+.pat_tb_bottom {
+    text-align: right;
+}
+
+button#TB_closeWindowButton {
+    position: static;
+    background-color: grey;
+    margin: 20px;
+    padding: 3px;
+    width: auto;
+    height: auto;
+    display: inline;
+}
+
+span.pat_spinner.spinner {
+    float: none;
+}
+
+/* blinking icon in string translations ajax */
 .blink {
     animation: blink 2s steps(5, start) infinite;
     -webkit-animation: blink 2s steps(5, start) infinite;
