@@ -57,10 +57,9 @@ The bulk translation works in such a way that for each selected post the plugin 
 
 Please be very carefull which posts you select. In the example below the plugin will translate the same "logical" post from english to polish, from french to polish and from german to polish. The result will be 3 polish versions of the same plugin and a mess in how the posts are linked (most probably two polish translations will be orphaned and only the last one would be linked to the other languages).
 
-BTW: you can quickly fix translation links using the function described in section 9 below.
-
 ![incorrect selection of posts for bulk translation](https://raw.githubusercontent.com/ndrwbdnz/polylang-google-api-translate/master/docs/incorrect_selection_bulk_translate.jpg)
 
+BTW: you can quickly fix translation links using the function described in section 9 below.
 
 7. If you are in a single post edit screen, you can also auto-translate it in a similar way as in the post table screen.
 If you are in the gutenberg block-edit screen, please click on the polylang icon in the top-right corner. Otherwise look for the polylang metabox in the right side of the screen. You should be able to see something like this:
