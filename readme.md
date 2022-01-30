@@ -55,7 +55,7 @@ The bulk translation works in such a way that for each selected post the plugin 
 
 !IMPORTANT
 
-Please be very carefull which posts you select. In the example below the plugin will translate the same "logical" post from english to polish, from french to polish and from german to polish. The result will be 3 polish versions of the same plugin and a mess in how the posts are linked (most probably two polish translations will be orphaned and only the last one would be linked to the other languages).
+Please be very carefull which posts you select. In the example below the plugin will translate the same "logical" post from english to polish, from french to polish and from german to polish. The result will be 3 polish versions of the same post and a mess in how the posts are linked (most probably two polish translations will be orphaned and only the last one would be linked to the other languages).
 
 ![incorrect selection of posts for bulk translation](https://raw.githubusercontent.com/ndrwbdnz/polylang-google-api-translate/master/docs/incorrect_selection_bulk_translate.jpg)
 
