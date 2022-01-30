@@ -161,7 +161,7 @@ class PAT_translate_class{
                 array(
                     'id'   => 'pat_batch_size',
                     'name' => __( 'Batch size for mass-translating posts' ),
-                    'desc' => __( 'Default 10. This is how many posts will be translated in one batch if you select posts and choose Auto-translate mass action. Keep in mind that if you have 5 languages per post, and set batch size to 10, it will be 50 translations per batch. Tweak this number depending on the number of languages and post size. If server timeouts occur during mass translations, lower the batch size.' ),
+                    'desc' => __( 'Default 5. This is how many posts will be translated in one batch if you select posts and choose Auto-translate mass action. Keep in mind that if you have 5 languages per post, and set batch size to 10, it will be 50 translations per batch. Tweak this number depending on the number of languages and post size. If server timeouts occur during mass translations, lower the batch size.' ),
                     'type' => 'text'
                 ),
 
@@ -185,7 +185,7 @@ class PAT_translate_class{
         $this->pat_taxonomies_to_exclude = array_key_exists('pat_taxonomies_to_exclude', $option_table)? $option_table['pat_taxonomies_to_exclude'] : array();
         $this->pat_taxonomies_to_translate = array_key_exists('pat_taxonomies_to_translate', $option_table)? $option_table['pat_taxonomies_to_translate'] : array();
         $this->pat_api_key = array_key_exists('pat_api_key', $option_table)? $option_table['pat_api_key'] : '';
-        $this->pat_batch_size = array_key_exists('pat_batch_size', $option_table)? $option_table['pat_batch_size'] : 10;
+        $this->pat_batch_size = array_key_exists('pat_batch_size', $option_table)? $option_table['pat_batch_size'] : 5;
 
     }
 
@@ -422,10 +422,14 @@ class PAT_translate_class{
             }
 
         } elseif ($taxonomy != ''){
-            $GLOBALS['taxonomy'] = $taxonomy;       //don't know why global taxonomy may be different from taxonomy. This in turn messes up fetching of single row language columns
             $screen = WP_Screen::get('edit-tags');
-            $screen->post_type = 'product';
-            $screen->taxonomy = 'product_cat';
+                if ($post_type == 'post'){
+                } elseif ($post_type == 'page'){
+                    $screen->post_type = 'page';    //this is probably unnecessary as there will never be taxonomy for pages ?
+                } elseif ($post_type == 'product'){
+                    $screen->post_type = 'product';
+                }
+            $screen->taxonomy = $taxonomy;
             $list_table = _get_list_table( 'WP_Terms_List_Table', array( 'screen' => $screen ) );
 
             foreach ($unique_ids as $term_id => $from_term){
